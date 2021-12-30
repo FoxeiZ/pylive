@@ -13,7 +13,7 @@ class prepare:
 
     __slots__ = ('playlist', 'queue', 'np')
     def __init__(self):
-        self.playlist = youtube.fetch_(url_playlist='https://youtube.com/playlist?list=PLtXKbXocjFKmdW3svenJwlYUoEnZ--Ids')
+        self.playlist = youtube.fetch_(url_playlist='https://www.youtube.com/playlist?list=PLtXKbXocjFKmSTkRutH15wV0DCPvN1JBs')
         self.queue = []
         self.np = None
 
@@ -46,7 +46,7 @@ class prepare:
 
     async def server(self):
         print('striming server started!\n')
-        proc = await asyncio.create_subprocess_exec(Path('./rtsp/rtsp-simple-server'), Path('./rtsp/rtsp-simple-server.yml'))
+        proc = await asyncio.create_subprocess_exec(Path('./rtsp/rtsp-simple-server.exe'), Path('./rtsp/rtsp-simple-server.yml'))
         await proc.wait()
 
     async def concat(self):
@@ -79,11 +79,12 @@ def strim():
 @app.route('/add')
 def addsong():
     url = request.args.get('url')
-    if youtube.checkduration(url) is True:
+    try:
+        youtube.checkduration(url)
         audio.addqueue(url)
         return jsonify({'result': 'success'})
-    else:
-        return jsonify({'error': 'duration must <10min'})
+    except Exception as e:
+        return jsonify({'error': e})
 
 @app.route('/favicon.ico')
 def favicon():

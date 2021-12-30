@@ -13,18 +13,12 @@ globopt = {
 
 def extractor(url, id):
 
-    ytdlopts = {
+    ytdlopts = globopt.copy()
+    ytdlopts.update({
         'format': 'bestaudio[ext=m4a]',
         'outtmpl': f'audio/audio{id}.%(ext)s',
         'restrictfilenames': True,
-        'nocheckcertificate': True,
-        'ignoreerrors': False,
-        'logtostderr': False,
-        'quiet': True,
-        'no_warnings': True,
-        'default_search': 'auto',
-        'source_address': '0.0.0.0'  # ipv6 addresses cause issues sometimes
-    }
+    })
 
     with YoutubeDL(ytdlopts) as ytdl:
         try:
@@ -48,6 +42,6 @@ def checkduration(url):
     with YoutubeDL(globopt) as ytdl:
         data = ytdl.extract_info(url=url, download=False, process=False)
         if data['duration'] <= 600.0: #10 mins
-            return True
+            return
         else:
-            return False
+            raise Exception('duration must <10min')
