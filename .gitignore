@@ -1,3 +1,5 @@
 rtsp
 .venv
 __pycache__
+startup.lnk
+audio
