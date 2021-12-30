@@ -13,6 +13,15 @@ globopt = {
 
 def extractor(url, id):
 
+    """
+    Return data as follow:
+        - duration[int]
+        - [tuple]:
+            - title[str]
+            - id[str]
+            - original_url[str]
+    """
+
     ytdlopts = globopt.copy()
     ytdlopts.update({
         'format': 'bestaudio[ext=m4a]',
@@ -24,7 +33,7 @@ def extractor(url, id):
         try:
             data = ytdl.extract_info(url=url, download=True)
             print(data['title'])
-            return int(data['duration'])
+            return (data['duration'], (data['title'], data['id'], data['original_url']))
         except DownloadError:
             print('403 link forbidden but i dont fucking care')
             pass
@@ -33,8 +42,9 @@ def fetch_(url_playlist):
     playlist = []
     with YoutubeDL(globopt) as ytdl:
         data = ytdl.extract_info(url=url_playlist, download=False, process=False)
-        for i in data['entries']:
-            playlist.append(i['url'])
+        for item in data['entries']:
+            if item['duration'] <= 600.0:
+                playlist.append(item['url'])
     shuffle(playlist)
     return playlist
 

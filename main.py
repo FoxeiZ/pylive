@@ -1,12 +1,15 @@
-from functools import partial
 import asyncio
-from threading import Thread
-from flask import Flask, redirect, request, jsonify, send_from_directory
-import youtube
+from functools import partial
 from pathlib import Path
+from threading import Thread
+
+from flask import Flask, jsonify, redirect, request, send_from_directory
+
+import youtube
 
 
 app = Flask(__name__)
+app.config['JSON_AS_ASCII'] = False
 user_agent = ('firefox', 'msie', 'opera', 'chrome')
 
 class prepare:
@@ -18,13 +21,13 @@ class prepare:
         self.np = None
 
     def file(self, url, id):
-        duration = youtube.extractor(url=url, id=id)
+        duration, self.np = youtube.extractor(url=url, id=id)
         # file.write(f"ffconcat version 1.0\nfile '{url}'\nfile 'list1.txt'")
         return duration-20
 
     def addqueue(self, url):
         print(f'[addqueue] {url=}')
-        self.playlist.append(url)
+        self.queue.append(url)
 
     def pop(self):
         if self.queue:
@@ -46,7 +49,7 @@ class prepare:
 
     async def server(self):
         print('striming server started!\n')
-        proc = await asyncio.create_subprocess_exec(Path('./rtsp/rtsp-simple-server.exe'), Path('./rtsp/rtsp-simple-server.yml'))
+        proc = await asyncio.create_subprocess_exec(Path('./rtsp/rtsp-simple-server'), Path('./rtsp/rtsp-simple-server.yml'))
         await proc.wait()
 
     async def concat(self):
@@ -86,6 +89,16 @@ def addsong():
     except Exception as e:
         return jsonify({'error': e})
 
+@app.route('/np')
+def nowplaying():
+    data = audio.np
+    return jsonify({
+        'title': data[0],
+        'id': data[1],
+        'original_url': data[2],
+        'next': audio.queue[0] if audio.queue else None
+    })
+
 @app.route('/favicon.ico')
 def favicon():
     return send_from_directory(Path('./'), 'favicon.ico', mimetype='image/png')
@@ -101,6 +114,8 @@ if __name__ == '__main__':
         results = await asyncio.gather(*tasks)
         return results
 
+    Path('audio/audio1.m4a').unlink(missing_ok=True)
+    Path('audio/audio2.m4a').unlink(missing_ok=True)
     partial_run = partial(app.run, host="0.0.0.0", port=9999, debug=False, use_reloader=False, threaded=False)
     t = Thread(target=partial_run)
     t.start()
