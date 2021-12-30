@@ -1,0 +1,3 @@
+ffconcat version 1.0
+file 'audio/audio2.m4a'
+file 'list1.txt'
