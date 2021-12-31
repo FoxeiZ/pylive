@@ -54,6 +54,10 @@ def checkduration(url):
         - url[str]
         - title[str]
     """
+
+    if 'youtu' not in url:
+        raise Exception('youtube link only')
+
     with YoutubeDL(globopt) as ytdl:
         data = ytdl.extract_info(url=url, download=False, process=False)
         if data['duration'] <= 600.0: #10 mins

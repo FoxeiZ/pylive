@@ -40,7 +40,7 @@ class prepare:
         print('ffmpeg strim started!\n')
         proc = await asyncio.create_subprocess_exec('ffmpeg', '-re', '-f', 'concat', '-safe', '0',
                                                     '-protocol_whitelist', 'file,tls,tcp,https','-i', 'list1.txt',
-                                                    '-c', 'copy', '-vn', '-f', 'flv', 'rtmp://127.0.0.1:1935/strim',
+                                                    '-c', 'copy', '-f', 'flv', 'rtmp://127.0.0.1:1935/strim',
                                                     '-nostats', '-loglevel', 'error', '-hide_banner')
         # proc = await asyncio.create_subprocess_exec('ffmpeg', '-re', '-f', 'concat', '-safe', '0', '-i', 'list1.txt',
         #                                             '-c:a', 'aac', '-ar', '48000', '-f', 'hls', '-hls_time', '6', '-hls_list_size',
@@ -86,7 +86,7 @@ def addsong():
         audio.addqueue(youtube.checkduration(url))
         return jsonify({'result': 'success'})
     except Exception as e:
-        return jsonify({'error': e})
+        return jsonify({'error': str(e)})
 
 @app.route('/np/')
 def nowplaying():
