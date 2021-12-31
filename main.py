@@ -20,14 +20,14 @@ class prepare:
         self.queue = []
         self.np = None
 
-    def file(self, url, id):
+    def downloader(self, url, id):
         duration, self.np = youtube.extractor(url=url, id=id)
         # file.write(f"ffconcat version 1.0\nfile '{url}'\nfile 'list1.txt'")
         return duration-20
 
-    def addqueue(self, url):
-        print(f'[addqueue] {url=}')
-        self.queue.append(url)
+    def addqueue(self, data):
+        print(f'[addqueue] {data=}')
+        self.queue.append(data)
 
     def pop(self):
         if self.queue:
@@ -54,9 +54,9 @@ class prepare:
 
     async def concat(self):
         while 1:
-            await asyncio.sleep(self.file(self.pop(), 1))
+            await asyncio.sleep(self.downloader(self.pop(), 1))
             Path('audio/audio2.m4a').unlink(missing_ok=True)
-            await asyncio.sleep(self.file(self.pop(), 2))
+            await asyncio.sleep(self.downloader(self.pop(), 2))
             Path('audio/audio1.m4a').unlink(missing_ok=True)
 
 
@@ -83,21 +83,34 @@ def strim():
 def addsong():
     url = request.args.get('url')
     try:
-        youtube.checkduration(url)
-        audio.addqueue(url)
+        audio.addqueue(youtube.checkduration(url))
         return jsonify({'result': 'success'})
     except Exception as e:
         return jsonify({'error': e})
 
-@app.route('/np')
+@app.route('/np/')
 def nowplaying():
     data = audio.np
     return jsonify({
         'title': data[0],
         'id': data[1],
         'original_url': data[2],
-        'next': audio.queue[0] if audio.queue else None
+        'next': None if not audio.queue else {
+            'url': audio.queue[0][0],
+            'title': audio.queue[0][1]
+        }
     })
+
+@app.route('/queue/')
+def getqueue():
+    def makelist():
+        for item in audio.queue:
+            yield {
+                'url': item[0],
+                'title': item[1]
+            }
+    return [] if not audio.queue else jsonify(list(makelist()))
+
 
 @app.route('/favicon.ico')
 def favicon():

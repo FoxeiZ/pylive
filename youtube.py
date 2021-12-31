@@ -15,7 +15,7 @@ def extractor(url, id):
 
     """
     Return data as follow:
-        - duration[int]
+        - duration[float]
         - [tuple]:
             - title[str]
             - id[str]
@@ -49,9 +49,14 @@ def fetch_(url_playlist):
     return playlist
 
 def checkduration(url):
+    """
+    Return a tuple include:
+        - url[str]
+        - title[str]
+    """
     with YoutubeDL(globopt) as ytdl:
         data = ytdl.extract_info(url=url, download=False, process=False)
         if data['duration'] <= 600.0: #10 mins
-            return
+            return (data['original_url'], data['title'])
         else:
             raise Exception('duration must <10min')
