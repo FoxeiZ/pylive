@@ -31,7 +31,7 @@ class prepare:
 
     def pop(self):
         if self.queue:
-            return self.queue.pop(0)
+            return self.queue.pop(0)[0]
         else:
             return self.playlist.pop(0)
 
@@ -104,12 +104,16 @@ def nowplaying():
 @app.route('/queue/')
 def getqueue():
     def makelist():
-        for item in audio.queue:
-            yield {
-                'url': item[0],
-                'title': item[1]
-            }
-    return [] if not audio.queue else jsonify(list(makelist()))
+        if audio.queue:
+            for item in audio.queue:
+                yield {
+                    'url': item[0],
+                    'title': item[1]
+                }
+        else:
+            return []
+
+    return jsonify({'result': list(makelist())})
 
 
 @app.route('/favicon.ico')
@@ -127,8 +131,11 @@ if __name__ == '__main__':
         results = await asyncio.gather(*tasks)
         return results
 
+    # clean up stuff
     Path('audio/audio1.m4a').unlink(missing_ok=True)
     Path('audio/audio2.m4a').unlink(missing_ok=True)
+
+    # main
     partial_run = partial(app.run, host="0.0.0.0", port=9999, debug=False, use_reloader=False, threaded=False)
     t = Thread(target=partial_run)
     t.start()
