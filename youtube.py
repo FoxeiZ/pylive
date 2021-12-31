@@ -24,7 +24,7 @@ def extractor(url, id):
 
     ytdlopts = globopt.copy()
     ytdlopts.update({
-        'format': 'bestaudio[ext=m4a]',
+        'format': 'bestaudio[ext=m4a]/bestaudio/best',
         'outtmpl': f'audio/audio{id}.%(ext)s',
         'restrictfilenames': True,
     })
