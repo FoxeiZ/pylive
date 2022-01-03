@@ -90,15 +90,18 @@ def addsong():
 
 @app.route('/np/')
 def nowplaying():
+    def makelist():
+        for item in audio.queue[slice(5)]:
+            yield {
+                'url': item[0],
+                'title': item[1]
+            }
     data = audio.np
     return jsonify({
         'title': data[0],
         'id': data[1],
         'original_url': data[2],
-        'next': None if not audio.queue else {
-            'url': audio.queue[0][0],
-            'title': audio.queue[0][1]
-        }
+        'next': None if not audio.queue else list(makelist())
     })
 
 @app.route('/queue/')
@@ -136,7 +139,7 @@ if __name__ == '__main__':
     Path('audio/audio2.m4a').unlink(missing_ok=True)
 
     # main
-    partial_run = partial(app.run, host="0.0.0.0", port=9999, debug=False, use_reloader=False, threaded=False)
+    partial_run = partial(app.run, host="0.0.0.0", port=9999, debug=False, use_reloader=False, threaded=True)
     t = Thread(target=partial_run)
     t.start()
     asyncio.run(gathers(tasks))
