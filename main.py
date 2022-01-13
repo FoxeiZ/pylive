@@ -41,7 +41,7 @@ class prepare:
         print('ffmpeg strim started!\n')
         proc = await asyncio.create_subprocess_exec('ffmpeg', '-re', '-f', 'concat', '-safe', '0',
                                                     '-protocol_whitelist', 'file,tls,tcp,https','-i', 'list1.txt',
-                                                    '-c', 'copy', '-f', 'flv', 'rtmp://127.0.0.1:1935/strim',
+                                                    '-c', 'copy', '-f', 'flv', 'rtsp://127.0.0.1:1935/strim',
                                                     '-nostats', '-loglevel', 'error', '-hide_banner')
         # proc = await asyncio.create_subprocess_exec('ffmpeg', '-re', '-f', 'concat', '-safe', '0', '-i', 'list1.txt',
         #                                             '-c:a', 'aac', '-ar', '48000', '-f', 'hls', '-hls_time', '6', '-hls_list_size',
@@ -69,15 +69,15 @@ def index():
     return 'owo'
 
 
-@app.route('/audio/')
-def strim():
-    ip = request.host.split(':')[0]
-    if request.user_agent.browser in user_agent:
-        print('indeed browser')
-        return redirect(f'http://{ip}:8000/strim')
-    else:
-        print('not browser')
-        return redirect(f'rtmp://{ip}:1935/strim')
+# @app.route('/audio/')
+# def strim():
+#     ip = request.host.split(':')[0]
+#     if request.user_agent.browser in user_agent:
+#         print('indeed browser')
+#         return redirect(f'http://{ip}:8000/strim')
+#     else:
+#         print('not browser')
+#         return redirect(f'rtmp://{ip}:1935/strim')
 
 @app.route('/add')
 def addsong():
