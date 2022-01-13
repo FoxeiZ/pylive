@@ -41,7 +41,7 @@ class prepare:
         print('ffmpeg strim started!\n')
         proc = await asyncio.create_subprocess_exec('ffmpeg', '-re', '-f', 'concat', '-safe', '0',
                                                     '-protocol_whitelist', 'file,tls,tcp,https','-i', 'list1.txt',
-                                                    '-c', 'copy', '-f', 'flv', 'rtsp://127.0.0.1:1935/strim',
+                                                    '-c', 'copy', '-f', 'rtsp', 'rtsp://127.0.0.1:1935/strim',
                                                     '-nostats', '-loglevel', 'error', '-hide_banner')
         # proc = await asyncio.create_subprocess_exec('ffmpeg', '-re', '-f', 'concat', '-safe', '0', '-i', 'list1.txt',
         #                                             '-c:a', 'aac', '-ar', '48000', '-f', 'hls', '-hls_time', '6', '-hls_list_size',
