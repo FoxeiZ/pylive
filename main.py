@@ -15,6 +15,7 @@ user_agent = ('firefox', 'msie', 'opera', 'chrome')
 class prepare:
 
     __slots__ = ('playlist', 'queue', 'np')
+
     def __init__(self):
         self.playlist = youtube.fetch_(url_playlist='https://www.youtube.com/playlist?list=PLtXKbXocjFKmSTkRutH15wV0DCPvN1JBs')
         self.queue = []
@@ -71,13 +72,12 @@ def index():
 @app.route('/audio/')
 def strim():
     ip = request.host.split(':')[0]
-    print(ip)
     if request.user_agent.browser in user_agent:
         print('indeed browser')
         return redirect(f'http://{ip}:8000/strim')
     else:
         print('not browser')
-        return redirect(f'http://{ip}:8000/strim/index.m3u8')
+        return redirect(f'rtmp://{ip}:1935/strim')
 
 @app.route('/add')
 def addsong():
@@ -118,10 +118,27 @@ def getqueue():
 
     return jsonify({'result': list(makelist())})
 
+@app.route('/skip')
+def skip():
+
+    if not audio.queue:
+        return jsonify({'error': 'queue is empty'})
+
+    index = request.args.get('index')
+    if index:
+        if index < len(audio.queue):
+            del audio.queue[index]
+            return jsonify({'result': 'success'})
+        else:
+            return jsonify({'error': f'delete range must <{len(audio.queue)}'})
+    else:
+        del audio.queue[0]
+        return jsonify({'result': 'success'})
 
 @app.route('/favicon.ico')
 def favicon():
     return send_from_directory(Path('./'), 'favicon.ico', mimetype='image/png')
+
 
 if __name__ == '__main__':
 
@@ -130,6 +147,7 @@ if __name__ == '__main__':
         audio.ffmpeg(),
         audio.concat()
     ]
+
     async def gathers(tasks):
         results = await asyncio.gather(*tasks)
         return results
