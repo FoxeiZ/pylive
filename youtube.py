@@ -3,16 +3,15 @@ from yt_dlp.utils import DownloadError
 from random import shuffle
 
 globopt = {
-        'nocheckcertificate': True,
-        'ignoreerrors': False,
-        'logtostderr': False,
-        'quiet': True,
-        'no_warnings': True,
-        'source_address': '0.0.0.0'
+    'nocheckcertificate': True,
+    'ignoreerrors': False,
+    'logtostderr': False,
+    'quiet': True,
+    'no_warnings': True,
+    'source_address': '0.0.0.0'
 }
 
-def extractor(url, id):
-
+def extractor(url):
     """
     Return data as follow:
         - duration[float]
@@ -25,7 +24,7 @@ def extractor(url, id):
     ytdlopts = globopt.copy()
     ytdlopts.update({
         'format': 'bestaudio[ext=m4a]/bestaudio/best',
-        'outtmpl': f'audio/audio{id}.%(ext)s',
+        'outtmpl': f'audio.%(ext)s',
         'restrictfilenames': True,
     })
 
