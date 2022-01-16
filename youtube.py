@@ -42,7 +42,7 @@ def fetch_(url_playlist):
     with YoutubeDL(globopt) as ytdl:
         data = ytdl.extract_info(url=url_playlist, download=False, process=False)
         for item in data['entries']:
-            if item['duration'] <= 900.0:
+            if item['duration'] <= 600.0:
                 playlist.append(item['url'])
     shuffle(playlist)
     return playlist
@@ -59,7 +59,7 @@ def checkduration(url):
 
     with YoutubeDL(globopt) as ytdl:
         data = ytdl.extract_info(url=url, download=False, process=False)
-        if data['duration'] <= 900.0: #10 mins
+        if data['duration'] <= 600.0: #10 mins
             return (data['original_url'], data['title'])
         else:
-            raise Exception('duration must <15min')
+            raise Exception('duration must <10min')
