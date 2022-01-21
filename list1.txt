@@ -1,3 +1,4 @@
 ffconcat version 1.0
+file 'audio.m4a'
 file 'audio/audio1.m4a'
 file 'list2.txt'
