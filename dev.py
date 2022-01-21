@@ -15,12 +15,12 @@ user_agent = ('firefox', 'msie', 'opera', 'chrome')
 
 class prepare:
 
-    # __slots__ = ('playlist', 'queue', 'np', 'temp', 'total', 'n', 'disable', 'id')
+    __slots__ = ('playlist', 'queue', '_np')
     def __init__(self, **args):
-        self.playlist = youtube.fetch_(url_playlist='https://www.youtube.com/playlist?list=PLtXKbXocjFKmSTkRutH15wV0DCPvN1JBs')
+        self.playlist = youtube.fetch_(url_playlist='https://youtube.com/playlist?list=PLtXKbXocjFKnXaucIurA63M7c5QieL7Ah')
+        # self.playlist = youtube.fetch_(url_playlist='https://www.youtube.com/playlist?list=PLtXKbXocjFKmSTkRutH15wV0DCPvN1JBs')
         self.queue = []
         self._np = None
-        self.temp = None
 
     @property
     def np(self):
@@ -29,16 +29,6 @@ class prepare:
     @np.setter
     def np(self, value):
         self._np = value
-
-    # def downloader(self, url, id):
-    #     duration, self.np = youtube.extractor(url=url, id=id)
-    #     # file.write(f"ffconcat version 1.0\nfile '{url}'\nfile 'list1.txt'")
-    #     proc = await asyncio.create_subprocess_exec('ffmpeg', '-re', '-protocol_whitelist', 'file,tls,tcp,https',
-    #                                                 '-i', 'list1.txt', '-c', 'copy',
-    #                                                 '-f', 'rtsp', 'rtsp://127.0.0.1:1935/strim',
-    #                                                 '-nostats', '-loglevel', 'error', '-hide_banner')
-    #     await proc.wait()
-    #     return duration
 
     def addqueue(self, data):
         print(f'[addqueue] {data=}')
@@ -55,16 +45,9 @@ class prepare:
         proc = await asyncio.create_subprocess_exec(Path('./rtsp/rtsp-simple-server'), Path('./rtsp/rtsp-simple-server.yml'))
         await proc.wait()
 
-    # async def concat(self):
-    #     while 1:
-    #         await asyncio.sleep(self.downloader(self.pop(), 1))
-    #         Path('audio/audio2.m4a').unlink(missing_ok=True)
-    #         await asyncio.sleep(self.downloader(self.pop(), 2))
-    #         Path('audio/audio1.m4a').unlink(missing_ok=True)
-
     async def player(self):
         ffpb.main(['-re', '-protocol_whitelist', 'file,tls,tcp,https',
-                   '-i', 'list1.txt', '-c', 'copy',
+                   '-i', 'list.txt', '-c', 'copy', '-nostdin',
                    '-f', 'rtsp', 'rtsp://127.0.0.1:8554/strim'], tqdm=Handler)
 
 
@@ -77,18 +60,22 @@ class Handler:
         self.id = 2
         self.temp = None
         self.disable = False
-        self.total = 136
+        self.total = 17
 
     def close(self):
         if self.disable:
             return
-        
+
         self.disable = True
         return
 
     def update(self, n=1):
         if self.disable:
             return
+
+        # if self.total == self.n:
+        #     print(self.temp)
+        #     audio.np = self.temp
 
         if subtract(self.total, 10) == self.n:
             if self.id == 1:
@@ -99,12 +86,10 @@ class Handler:
             Path(f'audio/audio{self.id}.m4a').unlink(missing_ok=True)
             duration, self.temp = youtube.extractor(url=audio.pop(), id=self.id)
             self.total += duration
-
-        if self.total == self.n:
             audio.np = self.temp
+            print(self.temp)
 
         self.n += n
-        print(self.total, self.n, n)
 
 
 @app.route('/')
@@ -128,7 +113,9 @@ def nowplaying():
                 'url': item[0],
                 'title': item[1]
             }
-    data = audio.np
+    data = audio._np
+    print(audio._np)
+    print(data)
     return jsonify({
         'title': data[0],
         'id': data[1],
@@ -176,8 +163,6 @@ if __name__ == '__main__':
 
     tasks = [
         audio.server(),
-        # audio.ffmpeg(),
-        # audio.concat()
         audio.player()
     ]
 
@@ -191,7 +176,7 @@ if __name__ == '__main__':
     # Path('audio.m4a').unlink(missing_ok=True)
 
     # main
-    # partial_run = partial(app.run, host="0.0.0.0", port=9999, debug=False, use_reloader=False, threaded=True)
-    # t = Thread(target=partial_run)
-    # t.start()
+    partial_run = partial(app.run, host="0.0.0.0", port=9999, debug=False, use_reloader=False, threaded=True)
+    t = Thread(target=partial_run)
+    t.start()
     asyncio.run(gathers(tasks))

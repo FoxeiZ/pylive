@@ -42,8 +42,11 @@ def fetch_(url_playlist):
     with YoutubeDL(globopt) as ytdl:
         data = ytdl.extract_info(url=url_playlist, download=False, process=False)
         for item in data['entries']:
-            if item['duration'] <= 900.0:
-                playlist.append(item['url'])
+            try:
+                if item['duration'] <= 900.0:
+                    playlist.append(item['url'])
+            except TypeError:
+                print(f"{item['url']} is private")
     shuffle(playlist)
     return playlist
 
