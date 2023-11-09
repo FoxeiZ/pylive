@@ -150,7 +150,7 @@ class QueueAudioHandler:
             process=False,
         )
 
-    def experiment_get_related_tracks(self) -> list:
+    def experiment_get_related_tracks(self) -> list[str | dict[str, Any]]:
         data = URLRequest.request(
             "https://www.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
             method="POST",
@@ -218,7 +218,8 @@ class QueueAudioHandler:
 
     def populate_autoqueue(self):
         if not self.auto_queue and not self.queue:
-            self.auto_queue = self.experiment_get_related_tracks()
+            # take 2 items only
+            self.auto_queue = self.experiment_get_related_tracks()[:2]
 
     def add(self, url):
         ret = extractor.create(url, process=False)
