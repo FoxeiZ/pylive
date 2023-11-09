@@ -145,6 +145,7 @@
   padding: 32px 10px;
   gap: 10px;
   justify-content: space-evenly;
+  flex-wrap: wrap;
 }
 
 .setting-box {
