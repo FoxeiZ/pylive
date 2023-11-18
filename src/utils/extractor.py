@@ -1,3 +1,5 @@
+import json
+from random import randint
 from typing import Generator
 
 from yt_dlp import YoutubeDL
@@ -9,6 +11,8 @@ from .errors import (
     VideoIsOverLengthException,
     PlaylistNotFoundException,
 )
+
+from ..utils.general import URLRequest
 
 globopts = {
     "nocheckcertificate": True,
@@ -122,5 +126,143 @@ def fetch_playlist(url_playlist) -> list:
                 playlist.append(item["url"])
             except TypeError:
                 print(f"{item['url']} is private")
+
+    return playlist
+
+
+def legacy_get_related_tracks(data):
+    if "youtube" not in data["extractor"]:
+        data = create(f"ytsearch1:{data['title']}", process=False)
+        if not data:
+            return
+
+    related_video: dict = json.loads(
+        URLRequest.request(
+            f'https://vid.puffyan.us/api/v1/videos/{data["id"]}?fields=recommendedVideos'
+        ).read()
+    )
+
+    if related_video.get("recommendedVideos", False):
+        related_video = related_video["recommendedVideos"]
+
+    return create(
+        f"https://www.youtube.com/watch?v={related_video[randint(0, len(related_video) - 1)]['videoId']}",
+        process=False,
+    )
+
+
+
+def youtube_music_get_related_tracks(now_playing: dict) -> list:
+    videoId = now_playing.get("id")
+    data = URLRequest.request(
+        "https://www.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+        method="POST",
+        data={
+            "context": {
+                "client": {
+                    "hl": "en",
+                    "gl": "US",
+                    "clientName": "WEB",
+                    "clientVersion": "2.20220809.02.00",
+                    "originalUrl": "https://www.youtube.com",
+                    "platform": "DESKTOP",
+                },
+            },
+            "videoId": videoId,
+            "racyCheckOk": True,
+            "contentCheckOk": True,
+        },
+        headers={
+            "Origin": "https://www.youtube.com",
+            "Referer": "https://www.youtube.com/",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+    )
+
+    if not data:
+        return []
+
+    data_json = json.loads(data.read())
+
+    related: list[dict] = []
+    try:
+        related = data_json["contents"]["twoColumnWatchNextResults"][
+            "secondaryResults"
+        ]["secondaryResults"]["results"]
+    except Exception:
+        return []
+
+    # for item in related:
+    #     res = item.get("compactRadioRenderer", False)
+
+    #     if not res:
+    #         continue
+
+    #     playlist = extractor.fetch_playlist(res["shareUrl"])
+    #     # remove the first entry; it usually is the same as the now-play one.
+    #     return playlist[1:]
+
+    playlist = []
+    for count, item in enumerate(related):
+        if count > 4:
+            break
+
+        res = item.get("compactVideoRenderer", False)
+        if not res:
+            continue
+        playlist.append(f"https://www.youtube.com/watch?v={res['videoId']}")
+
+    return playlist
+
+
+def youtube_get_related_tracks(now_playing: dict) -> list:
+    videoId = now_playing.get("id")
+    data = URLRequest.request(
+        "https://www.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+        method="POST",
+        data={
+            "context": {
+                "client": {
+                    "hl": "en",
+                    "gl": "US",
+                    "clientName": "WEB",
+                    "clientVersion": "2.20220809.02.00",
+                    "originalUrl": "https://www.youtube.com",
+                    "platform": "DESKTOP",
+                },
+            },
+            "videoId": videoId,
+            "racyCheckOk": True,
+            "contentCheckOk": True,
+        },
+        headers={
+            "Origin": "https://www.youtube.com",
+            "Referer": "https://www.youtube.com/",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+    )
+
+    if not data:
+        return []
+
+    data_json = json.loads(data.read())
+
+    related: list[dict] = []
+    try:
+        related = data_json["contents"]["twoColumnWatchNextResults"][
+            "secondaryResults"
+        ]["secondaryResults"]["results"]
+    except Exception:
+        return []
+
+    playlist = []
+    for count, item in enumerate(related):
+        if count > 4:
+            break
+
+        res = item.get("compactVideoRenderer", False)
+        if not res:
+            continue
+        playlist.append(f"https://www.youtube.com/watch?v={res['videoId']}")
 
     return playlist
