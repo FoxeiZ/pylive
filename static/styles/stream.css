@@ -44,6 +44,7 @@
 }
 
 .metatag {
+  position: relative;
   display: flex;
   height: 64px;
   width: 100%;
@@ -52,6 +53,11 @@
   padding: 0px 12px 0px 12px;
   align-items: center;
   justify-content: space-between;
+}
+
+#duration {
+  position: absolute;
+  right: 12px;
 }
 
 .song-info {
