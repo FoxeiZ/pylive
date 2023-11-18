@@ -140,7 +140,9 @@ function AddQueueBox() {
 }
 
 function toggleSettings() {
-  document.getElementById("visualizer-setting").classList.toggle("hidden");
+  var _div_CL = document.getElementById("visualizer-setting").classList;
+  _div_CL.toggle("hidden");
+  _div_CL.toggle("active");
 }
 
 document

@@ -9,7 +9,20 @@
 }
 
 .hidden {
-  display: none !important;
+  /* display: none !important; */
+  height: 0 !important;
+  width: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
+.active {
+  /* display: block; */
+  opacity: 1 !important;
+  visibility: visible !important;
+  transition: visibility 0s, opacity 0.5s linear;
 }
 
 .ctrl-button {
