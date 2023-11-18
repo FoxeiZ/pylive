@@ -39,18 +39,6 @@ function secondsToTime(secs) {
   }
 }
 
-function voteSkip() {
-  var xhttp = new XMLHttpRequest();
-  xhttp.onload = function () {
-    data = JSON.parse(xhttp.responseText);
-    if (data.msg == "success") {
-      console.log("Vote skip success");
-    }
-  }
-  xhttp.open("GET", "/skip", true);
-  xhttp.send();
-}
-
 function increaseDuration() {
   duration += 1;
   duration_div.innerText = secondsToTime(duration);
@@ -65,6 +53,7 @@ function changeSongEvent(e) {
   }
   data = JSON.parse(e.data);
   title_div.innerText = data.title;
+  document.title = data.title;
   title_div.href = data.webpage_url;
 
   artist_div.innerText = data.channel;
@@ -93,16 +82,45 @@ function watchEvent() {
   };
 }
 
+function voteSkip() {
+  fetch("/skip", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.msg == "success") {
+        console.log("Vote skip success");
+      } else if (data.error == true) {
+        throw data.msg;
+      }
+    })
+    .catch((error) => {
+      console.error("Error:", error);
+    });
+}
+
 function addQueue(url) {
-  var xhttp = new XMLHttpRequest();
-  xhttp.onload = function () {
-    data = JSON.parse(xhttp.responseText);
-    if (data.msg == "success") {
-      console.log("Add queue success");
-    }
-  }
-  xhttp.open("GET", `/add?url=${url}`, true);
-  xhttp.send();
+  fetch("/add", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      url: url,
+    }),
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.msg == "success") {
+        console.log("Add queue success");
+      }
+    })
+    .catch((error) => {
+      console.error("Error:", error);
+    });
 }
 
 function AddQueueBox() {
@@ -125,12 +143,13 @@ function toggleSettings() {
   document.getElementById("visualizer-setting").classList.toggle("hidden");
 }
 
-document.getElementById("add-queue-box").addEventListener("keyup", ({key}) => {
-  if (key === "Enter") {
-    AddQueueBox();
-  }
-});
-
+document
+  .getElementById("add-queue-box")
+  .addEventListener("keyup", ({ key }) => {
+    if (key === "Enter") {
+      AddQueueBox();
+    }
+  });
 
 play_btn.addEventListener("click", function () {
   play_btn.classList.add("hidden");
