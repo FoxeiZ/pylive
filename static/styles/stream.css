@@ -63,6 +63,10 @@
   text-decoration: none;
   color: black;
   font-size: large;
+  max-width: 30vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #artist {
