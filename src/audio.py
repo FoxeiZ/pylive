@@ -129,97 +129,10 @@ class QueueAudioHandler:
         with self.lock:
             self._audio_position = value
 
-    @staticmethod
-    def get_related_tracks(data):
-        if "youtube" not in data["extractor"]:
-            data = extractor.create(f"ytsearch1:{data['title']}", process=False)
-            if not data:
-                return
-
-        related_video: dict = json.loads(
-            URLRequest.request(
-                f'https://vid.puffyan.us/api/v1/videos/{data["id"]}?fields=recommendedVideos'
-            ).read()
-        )
-
-        if related_video.get("recommendedVideos", False):
-            related_video = related_video["recommendedVideos"]
-
-        return extractor.create(
-            f"https://www.youtube.com/watch?v={related_video[randint(0, len(related_video) - 1)]['videoId']}",
-            process=False,
-        )
-
-    def experiment_get_related_tracks(self) -> list[str | dict[str, Any]]:
-        data = URLRequest.request(
-            "https://www.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
-            method="POST",
-            data={
-                "context": {
-                    "client": {
-                        "hl": "en",
-                        "gl": "US",
-                        "clientName": "WEB",
-                        "clientVersion": "2.20220809.02.00",
-                        "originalUrl": "https://www.youtube.com",
-                        "platform": "DESKTOP",
-                    },
-                },
-                "videoId": self.now_playing.get("id", "NA"),
-                "racyCheckOk": True,
-                "contentCheckOk": True,
-            },
-            headers={
-                "Origin": "https://www.youtube.com",
-                "Referer": "https://www.youtube.com/",
-                "Content-Type": "application/json; charset=utf-8",
-            },
-        )
-
-        if not data:
-            print("data not found")
-            return []
-
-        data_json = json.loads(data.read())
-
-        related: list[dict] = []
-        try:
-            related = data_json["contents"]["twoColumnWatchNextResults"][
-                "secondaryResults"
-            ]["secondaryResults"]["results"]
-        except Exception as err:
-            print("empty response")
-            print(err.__class__.__name__, str(err))
-            # import pprint
-            # pprint.pprint(data_json, indent=2)
-            return ["https://music.youtube.com/watch?v=cUuQ5L6Obu4"]
-
-        for item in related:
-            res = item.get("compactRadioRenderer", False)
-
-            if not res:
-                continue
-
-            playlist = extractor.fetch_playlist(res["shareUrl"])
-            # remove the first entry; it usually is the same as the now-play one.
-            return playlist[1:]
-
-        playlist = []
-        for count, item in enumerate(related):
-            if count > 1:  # take 2 items only
-                break
-
-            res = item.get("compactVideoRenderer", False)
-            if not res:
-                continue
-            playlist.append(f"https://www.youtube.com/watch?v={res['videoId']}")
-
-        return playlist
-
     def populate_autoqueue(self):
         if not self.auto_queue and not self.queue:
             # take 2 items only
-            self.auto_queue = self.experiment_get_related_tracks()[:2]
+            self.auto_queue = extractor.youtube_get_related_tracks(self.now_playing)[:2]
 
     def add(self, url):
         ret = extractor.create(url, process=False)
