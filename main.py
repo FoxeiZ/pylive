@@ -1,4 +1,4 @@
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, abort, jsonify, render_template, request
 
 from src.audio import QueueAudioHandler
 from src.utils.general import URLRequest, run_in_thread
@@ -6,7 +6,7 @@ import json
 
 WEBHOOK_URL = None
 app = Flask(__name__, static_url_path="/static")
-# prev_add = None
+prev_add = None
 
 # audio streaming
 audio = QueueAudioHandler()
@@ -86,22 +86,49 @@ def gen(audio: QueueAudioHandler):
     return
 
 
-@app.route("/add")
-def add():
-    # global prev_add
-    # if prev_add == request.remote_addr:
-    #     return make_error(msg="Calm down you just use this.", status_code=429)
+def check_args(args_name: list):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            if request.method == "GET":
+                data = request.args
+            elif request.method == "POST":
+                data = request.form
+            else:
+                return abort(500)
 
-    url = request.args.get("url")
-    if not url:
-        return make_error(msg="missing `url` argument")
+            for arg in args_name:
+                if arg not in data:
+                    return abort(500)
+                else:
+                    kwargs[arg] = data.get(arg)
+            return func(*args, **kwargs)
 
+        wrapper.__name__ = func.__name__
+        return wrapper
+
+    return decorator
+
+
+def check_ratelimit(func):
+    def wrapper(*args, **kwargs):
+        global prev_add
+        if prev_add == request.remote_addr:
+            return make_error(msg="Calm down you just use this.", status_code=429)
+        prev_add = request.remote_addr
+        return func(*args, **kwargs)
+    
+    wrapper.__name__ = func.__name__
+    return wrapper
+
+
+@app.route("/add", methods=["POST"])
+@check_args(["url"])
+def add(url):
     try:
         audio.add(url)
     except Exception as err:
         return make_error(msg=f"{err.__class__.__name__}: {str(err)}")
 
-    # prev_add = request.remote_addr
     return make_response()
 
 
@@ -134,7 +161,7 @@ def get_nowplaying():
     return make_response(data=data)
 
 
-@app.route("/skip")
+@app.route("/skip", methods=["POST"])
 def skip():
     audio._skip = True
     return make_response()
