@@ -92,7 +92,10 @@ def check_args(args_name: list):
             if request.method == "GET":
                 data = request.args
             elif request.method == "POST":
-                data = request.form
+                if request.is_json:
+                    data = request.json
+                else:
+                    data = request.form
             else:
                 return abort(500)
 
