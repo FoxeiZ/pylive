@@ -1,8 +1,9 @@
+import json
+
 from flask import Flask, Response, abort, jsonify, render_template, request
 
-from src.audio import QueueAudioHandler
-from src.utils.general import URLRequest, run_in_thread
-import json
+from src.general import URLRequest, run_in_thread
+from src.server import QueueAudioHandler
 
 WEBHOOK_URL = None
 app = Flask(__name__, static_url_path="/static")
@@ -80,7 +81,7 @@ def make_error(*args, **kwargs):
 
 def gen(audio: QueueAudioHandler):
     yield audio.wait_for_header()
-    while audio.audio_thread.is_alive():
+    while audio._audio_thread.is_alive():
         yield audio.buffer
         audio.event.wait()
     return
@@ -119,7 +120,7 @@ def check_ratelimit(func):
             return make_error(msg="Calm down you just use this.", status_code=429)
         prev_add = request.remote_addr
         return func(*args, **kwargs)
-    
+
     wrapper.__name__ = func.__name__
     return wrapper
 

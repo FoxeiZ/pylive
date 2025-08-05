@@ -75,6 +75,10 @@ class OggPage:
             raise OggError("bad data stream")
 
     def iter_packets(self) -> Generator[Tuple[bytes, bool], None, None]:
+        """Returns a generator that yields packets of data from the Ogg page,
+        and a boolean that indicates if the packet is complete.
+        True if the packet is complete, False if it is partial.
+        """
         packetlen = offset = 0
         partial = True
 

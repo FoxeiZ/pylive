@@ -1,30 +1,16 @@
-import sys
 import json
 import subprocess
 from array import array
 from queue import Queue
-from random import randint
 from threading import Event, Lock, Thread
 from time import sleep
 from typing import Any, Generator, Union
 
-from src.utils import extractor
-from src.utils.general import MISSING_TYPE, URLRequest, run_in_thread
-from src.utils.opusreader import OggStream
+from src import extractor
+from src.general import MISSING_TYPE, run_in_thread
+from src.opusreader import OggStream
 
 MISSING = MISSING_TYPE()
-
-
-def get_or_set_savefile(data=None):
-    patf = sys.path[0] + "/.saveurl"
-    try:
-        with open(patf, "w" if data else "r") as f:
-            if not data:
-                return f.read()
-            f.write(data)
-        return data
-    except FileNotFoundError:
-        return "https://music.youtube.com/watch?v=cUuQ5L6Obu4"
 
 
 class SendEvent:
@@ -37,10 +23,10 @@ class SendEvent:
         self.event_data = ""
         self.event_signal = Event()
 
-        self._event = Thread(
+        self._event_manager_thread = Thread(
             target=self.manage_event, name="send_event_manager", daemon=True
         )
-        self._event.start()
+        self._event_manager_thread.start()
 
     def watch(self) -> Generator[str, None, None]:
         if "nowplaying" in self.event_data:
@@ -76,16 +62,14 @@ class QueueAudioHandler:
         "ffmpeg_stdout",
         "ffmpeg_stdin",
         "_audio_position",
-        "audio_thread",
-        "thr_queue",
+        "_audio_thread",
+        "_audio_queue_thread",
         "event_queue",
     )
 
     def __init__(self):
         # self.queue = ["https://music.youtube.com/watch?v=cUuQ5L6Obu4"]
-        self.queue: list[Union[str, dict[str, str | bool | float]]] = [
-            get_or_set_savefile()
-        ]
+        self.queue: list[Union[str, dict[str, str | bool | float]]] = []
         self.auto_queue: list[Union[str, dict[str, str | bool | float]]] = []
 
         self._skip = False
@@ -106,12 +90,14 @@ class QueueAudioHandler:
         self.ffmpeg_stdin = self.ffmpeg.stdin
 
         self._audio_position: int = 0
-        self.audio_thread = Thread(
+        self._audio_thread = Thread(
             target=self.oggstream_reader, name="audio_vroom_vroom", daemon=True
         )
-        self.thr_queue = Thread(target=self.queue_handler, name="queue", daemon=True)
-        self.thr_queue.start()
-        self.audio_thread.start()
+        self._audio_queue_thread = Thread(
+            target=self.queue_handler, name="queue", daemon=True
+        )
+        self._audio_queue_thread.start()
+        self._audio_thread.start()
 
     @property
     def audio_duration(self):
@@ -134,13 +120,13 @@ class QueueAudioHandler:
             # take 2 items only
             self.auto_queue = extractor.youtube_get_related_tracks(self.now_playing)[:2]
 
-    def add(self, url):
+    def __add(self, url):
         ret = extractor.create(url, process=False)
         self.queue.append(ret)
         self.event_queue.add_event(SendEvent.QUEUE_ADD, ret)
 
-    # def add(self, url):
-    #     # run_in_thread(self.__add, url)
+    def add(self, url):
+        run_in_thread(self.__add, url)
 
     def pop(self):
         if self.queue:
@@ -175,7 +161,8 @@ class QueueAudioHandler:
         )
 
     def oggstream_reader(self):
-        pages_iter = OggStream(self.ffmpeg_stdout).iter_pages()  # type: ignore
+        assert self.ffmpeg_stdout is not None, "ffmpeg stdout is None or not set"
+        pages_iter = OggStream(self.ffmpeg_stdout).iter_pages()
         try:
             page = next(pages_iter)
             if page.flag == 2:
@@ -203,7 +190,6 @@ class QueueAudioHandler:
             self.audio_position = 0
 
             self.event_queue.add_event(SendEvent.NOW_PLAYING, audio_np)
-            get_or_set_savefile(audio_np["webpage_url"])
 
             s = subprocess.Popen(
                 [
