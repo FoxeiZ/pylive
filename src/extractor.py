@@ -1,20 +1,23 @@
+# pyright: reportArgumentType=false
+
 import json
-from random import randint
+import logging
 from typing import Generator
 
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
 from src.errors import (
-    VideoIsLiveException,
-    VideoIsUnavailableException,
-    VideoIsOverLengthException,
     PlaylistNotFoundException,
+    VideoIsLiveException,
+    VideoIsOverLengthException,
+    VideoIsUnavailableException,
 )
+from src.general import HTTPRequestManager
 
-from src.general import URLRequest
+logger = logging.getLogger(__name__)
 
-globopts = {
+YTDL_OPTIONS = {
     "nocheckcertificate": True,
     "ignoreerrors": False,
     "logtostderr": False,
@@ -30,133 +33,169 @@ globopts = {
     "playlistrandom": True,
 }
 
+MAX_DURATION_SECONDS = 900.0  # 15 minutes
+MAX_PLAYLIST_ENTRIES = 25
+MAX_RELATED_TRACKS = 5
 
-def check_length(item: dict) -> bool:
-    """Check if length > 15min"""
-    return item.get("duration", 901) > 900.0
+
+def is_video_too_long(video_info: dict) -> bool:
+    duration = video_info.get("duration", MAX_DURATION_SECONDS + 1)
+    return duration > MAX_DURATION_SECONDS
 
 
-def create(url, process=True) -> dict[str, str | bool | float]:
-    """
-    Retrieves information about a video from a given URL.
+def extract_video_info(url: str, process: bool = True) -> dict:
+    logger.info(f"Extracting video information from URL: {url}")
 
-    Parameters:
-        url (str): The URL of the video.
-        process (bool, optional): Whether to process the video or not. Defaults to True.
-
-    Returns:
-        Union[dict, None]: A dictionary containing information about the video, or None if the video could not be retrieved.
-    """
-    with YoutubeDL(globopts) as ytdl:
+    with YoutubeDL(YTDL_OPTIONS) as ytdl:
         try:
             data = ytdl.extract_info(url=url, download=False, process=process)
-            if not data:
-                raise VideoIsUnavailableException
 
-            if data.get("entries", False):
-                if isinstance(data["entries"], Generator):
-                    data = next(data["entries"])
+            if not data:
+                logger.warning(f"No data extracted from URL: {url}")
+                raise VideoIsUnavailableException("No video data available")
+
+            if data.get("entries"):
+                logger.debug("Processing playlist entries")
+                entries = data["entries"]  # pyright: ignore[reportGeneralTypeIssues]
+                if isinstance(entries, Generator):
+                    data = next(entries)
                 else:
-                    data = data["entries"][0]
+                    data = entries[0] if entries else None
+
+                if not data:
+                    logger.warning("No valid entries found in playlist")
+                    raise VideoIsUnavailableException("No valid playlist entries")
 
             if data.get("is_live", False):
-                raise VideoIsLiveException
+                logger.warning(f"Video is live stream: {url}")
+                raise VideoIsLiveException("Live streams are not supported")
 
-            if check_length(data):
-                raise VideoIsOverLengthException
+            if is_video_too_long(data):
+                duration = data.get("duration", 0)
+                logger.warning(f"Video too long ({duration}s): {url}")
+                raise VideoIsOverLengthException(
+                    f"Video duration {duration}s exceeds limit"
+                )
 
-            need_reencode = False
-            if data.get("asr", 0) != 48000:
-                need_reencode = True
-
-            if data.get("acodec", "none") != "opus":
-                need_reencode = True
-
-            ret = {
-                "title": data.get("title", "NA"),
-                "id": data.get("id", "NA"),
-                "webpage_url": data.get("webpage_url")
-                or data.get("original_url")
-                or data.get("url", "NA"),
+            needs_reencoding = _check_audio_requirements(data)
+            video_info = {
+                "title": data.get("title", "Unknown Title"),
+                "id": data.get("id", "unknown"),
+                "webpage_url": (
+                    data.get("webpage_url")
+                    or data.get("original_url")
+                    or data.get("url", url)
+                ),
                 "duration": data.get("duration", 0.0),
-                "channel": data.get("uploader", "NA"),
-                "channel_url": data.get("uploader_url")
-                or data.get("channel_url", "NA"),
+                "channel": data.get("uploader", "Unknown Channel"),
+                "channel_url": (
+                    data.get("uploader_url") or data.get("channel_url", "")
+                ),
                 "process": False,
-                "extractor": data.get("extractor", "None"),
-                "need_reencode": need_reencode,
+                "extractor": data.get("extractor", "unknown"),
+                "need_reencode": needs_reencoding,
             }
 
             if process:
-                ret.update(
+                video_info.update(
                     {
                         "url": data.get("url"),
                         "process": True,
                         "format_duration": data.get("duration_string", "0:00"),
                     }
                 )
+                logger.debug(f"Video processed for streaming: {video_info['title']}")
 
-            return ret
-        except DownloadError:
-            raise VideoIsUnavailableException
+            logger.info(f"Successfully extracted video info: {video_info['title']}")
+            return video_info
 
-
-def fetch_playlist(url_playlist) -> list:
-    item: dict
-    max_entries = globopts.get("playlistend", 25)
-
-    playlist = []
-    with YoutubeDL(globopts) as ytdl:
-        data = ytdl.extract_info(url=url_playlist, download=False, process=False)
-
-        if not data:
-            raise PlaylistNotFoundException
-
-        for count, item in enumerate(data.get("entries", [])):
-            try:
-                if count >= max_entries:
-                    return playlist
-
-                if not item:
-                    return playlist
-
-                if check_length(item):
-                    continue
-
-                playlist.append(item["url"])
-            except TypeError:
-                print(f"{item['url']} is private")
-
-    return playlist
+        except DownloadError as e:
+            logger.error(f"Download error for URL {url}: {e}")
+            raise VideoIsUnavailableException(f"Download error: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error extracting video info: {e}")
+            raise
 
 
-def legacy_get_related_tracks(data):
-    if "youtube" not in data["extractor"]:
-        data = create(f"ytsearch1:{data['title']}", process=False)
-        if not data:
-            return
+def _check_audio_requirements(video_data: dict) -> bool:
+    sample_rate = video_data.get("asr", 0)
+    audio_codec = video_data.get("acodec", "none")
 
-    related_video: dict = json.loads(
-        URLRequest.request(
-            f"https://vid.puffyan.us/api/v1/videos/{data['id']}?fields=recommendedVideos"
-        ).read()
-    )
+    needs_reencoding = False
 
-    if related_video.get("recommendedVideos", False):
-        related_video = related_video["recommendedVideos"]
+    if sample_rate != 48000:
+        logger.debug(f"Audio sample rate {sample_rate} != 48000, re-encoding needed")
+        needs_reencoding = True
 
-    return create(
-        f"https://www.youtube.com/watch?v={related_video[randint(0, len(related_video) - 1)]['videoId']}",
-        process=False,
-    )
+    if audio_codec != "opus":
+        logger.debug(f"Audio codec {audio_codec} != opus, re-encoding needed")
+        needs_reencoding = True
+
+    return needs_reencoding
 
 
-def youtube_music_get_related_tracks(now_playing: dict) -> list:
-    videoId = now_playing.get("id")
-    data = URLRequest.request(
-        "https://www.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
-        method="POST",
-        data={
+def fetch_playlist_tracks(playlist_url: str) -> list:
+    logger.info(f"Fetching playlist tracks from: {playlist_url}")
+
+    max_entries = YTDL_OPTIONS.get("playlistend", MAX_PLAYLIST_ENTRIES)
+    playlist_tracks = []
+
+    try:
+        with YoutubeDL(YTDL_OPTIONS) as ytdl:
+            data = ytdl.extract_info(url=playlist_url, download=False, process=False)
+
+            if not data:
+                logger.warning(f"No playlist data found for: {playlist_url}")
+                raise PlaylistNotFoundException("Playlist data not available")
+
+            entries = data.get("entries", [])
+            logger.debug(f"Found {len(entries)} entries in playlist")
+
+            for count, item in enumerate(entries):
+                try:
+                    if count >= max_entries:
+                        logger.debug(f"Reached maximum entries limit: {max_entries}")
+                        break
+
+                    if not item:
+                        logger.debug(
+                            "Empty item encountered, stopping playlist processing"
+                        )
+                        break
+
+                    if is_video_too_long(item):
+                        logger.debug(
+                            f"Skipping long video: {item.get('title', 'unknown')}"
+                        )
+                        continue
+
+                    playlist_tracks.append(item["url"])
+
+                except (TypeError, KeyError) as e:
+                    logger.warning(f"Error processing playlist item: {e}")
+                    if item and item.get("url"):
+                        logger.warning(f"Private or unavailable video: {item['url']}")
+
+        logger.info(
+            f"Successfully extracted {len(playlist_tracks)} tracks from playlist"
+        )
+        return playlist_tracks
+
+    except Exception as e:
+        logger.error(f"Error fetching playlist tracks: {e}")
+        raise PlaylistNotFoundException(f"Failed to process playlist: {str(e)}")
+
+
+def get_youtube_music_related_tracks(current_track: dict) -> list:
+    logger.debug("Getting YouTube Music related tracks")
+
+    video_id = current_track.get("id")
+    if not video_id:
+        logger.warning("No video ID available for YouTube Music API")
+        return []
+
+    try:
+        api_payload = {
             "context": {
                 "client": {
                     "hl": "en",
@@ -167,59 +206,67 @@ def youtube_music_get_related_tracks(now_playing: dict) -> list:
                     "platform": "DESKTOP",
                 },
             },
-            "videoId": videoId,
+            "videoId": video_id,
             "racyCheckOk": True,
             "contentCheckOk": True,
-        },
-        headers={
-            "Origin": "https://www.youtube.com",
-            "Referer": "https://www.youtube.com/",
-            "Content-Type": "application/json; charset=utf-8",
-        },
-    )
+        }
 
-    if not data:
+        response = HTTPRequestManager.make_request(
+            "https://www.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+            method="POST",
+            data=api_payload,
+            headers={
+                "Origin": "https://www.youtube.com",
+                "Referer": "https://www.youtube.com/",
+                "Content-Type": "application/json; charset=utf-8",
+            },
+        )
+
+        if not response:
+            logger.warning("No response from YouTube Music API")
+            return []
+
+        response_data = json.loads(response.read())
+
+        try:
+            secondary_results = response_data["contents"]["twoColumnWatchNextResults"][
+                "secondaryResults"
+            ]["secondaryResults"]["results"]
+        except KeyError as e:
+            logger.warning(f"Unexpected API response structure: {e}")
+            return []
+
+        related_urls = []
+        for count, item in enumerate(secondary_results):
+            if count >= MAX_RELATED_TRACKS:
+                break
+
+            compact_video = item.get("compactVideoRenderer")
+            if not compact_video:
+                continue
+
+            video_id = compact_video.get("videoId")
+            if video_id:
+                related_urls.append(f"https://www.youtube.com/watch?v={video_id}")
+
+        logger.debug(f"Found {len(related_urls)} related tracks from YouTube Music")
+        return related_urls
+
+    except Exception as e:
+        logger.error(f"Error getting YouTube Music related tracks: {e}")
         return []
 
-    data_json = json.loads(data.read())
 
-    related: list[dict] = []
+def get_youtube_related_tracks(current_track: dict) -> list:
+    logger.debug("Getting YouTube related tracks")
+
+    video_id = current_track.get("id")
+    if not video_id:
+        logger.warning("No video ID available for YouTube API")
+        return []
+
     try:
-        related = data_json["contents"]["twoColumnWatchNextResults"][
-            "secondaryResults"
-        ]["secondaryResults"]["results"]
-    except Exception:
-        return []
-
-    # for item in related:
-    #     res = item.get("compactRadioRenderer", False)
-
-    #     if not res:
-    #         continue
-
-    #     playlist = extractor.fetch_playlist(res["shareUrl"])
-    #     # remove the first entry; it usually is the same as the now-play one.
-    #     return playlist[1:]
-
-    playlist = []
-    for count, item in enumerate(related):
-        if count > 4:
-            break
-
-        res = item.get("compactVideoRenderer", False)
-        if not res:
-            continue
-        playlist.append(f"https://www.youtube.com/watch?v={res['videoId']}")
-
-    return playlist
-
-
-def youtube_get_related_tracks(now_playing: dict) -> list:
-    videoId = now_playing.get("id")
-    data = URLRequest.request(
-        "https://www.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
-        method="POST",
-        data={
+        api_payload = {
             "context": {
                 "client": {
                     "hl": "en",
@@ -230,38 +277,53 @@ def youtube_get_related_tracks(now_playing: dict) -> list:
                     "platform": "DESKTOP",
                 },
             },
-            "videoId": videoId,
+            "videoId": video_id,
             "racyCheckOk": True,
             "contentCheckOk": True,
-        },
-        headers={
-            "Origin": "https://www.youtube.com",
-            "Referer": "https://www.youtube.com/",
-            "Content-Type": "application/json; charset=utf-8",
-        },
-    )
+        }
 
-    if not data:
+        # Make API request
+        response = HTTPRequestManager.make_request(
+            "https://www.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+            method="POST",
+            data=api_payload,
+            headers={
+                "Origin": "https://www.youtube.com",
+                "Referer": "https://www.youtube.com/",
+                "Content-Type": "application/json; charset=utf-8",
+            },
+        )
+
+        if not response:
+            logger.warning("No response from YouTube API")
+            return []
+
+        response_data = json.loads(response.read())
+
+        try:
+            secondary_results = response_data["contents"]["twoColumnWatchNextResults"][
+                "secondaryResults"
+            ]["secondaryResults"]["results"]
+        except KeyError as e:
+            logger.warning(f"Unexpected YouTube API response structure: {e}")
+            return []
+
+        related_urls = []
+        for count, item in enumerate(secondary_results):
+            if count >= MAX_RELATED_TRACKS:
+                break
+
+            compact_video = item.get("compactVideoRenderer")
+            if not compact_video:
+                continue
+
+            video_id = compact_video.get("videoId")
+            if video_id:
+                related_urls.append(f"https://www.youtube.com/watch?v={video_id}")
+
+        logger.debug(f"Found {len(related_urls)} related tracks from YouTube")
+        return related_urls
+
+    except Exception as e:
+        logger.error(f"Error getting YouTube related tracks: {e}")
         return []
-
-    data_json = json.loads(data.read())
-
-    related: list[dict] = []
-    try:
-        related = data_json["contents"]["twoColumnWatchNextResults"][
-            "secondaryResults"
-        ]["secondaryResults"]["results"]
-    except Exception:
-        return []
-
-    playlist = []
-    for count, item in enumerate(related):
-        if count > 4:
-            break
-
-        res = item.get("compactVideoRenderer", False)
-        if not res:
-            continue
-        playlist.append(f"https://www.youtube.com/watch?v={res['videoId']}")
-
-    return playlist

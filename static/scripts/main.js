@@ -1,177 +1,268 @@
-const audio_player = document.getElementById("main-player");
-const play_btn = document.getElementById("play");
-const pause_btn = document.getElementById("pause");
+const audioPlayer = document.getElementById("main-player");
+const playButton = document.getElementById("play");
+const pauseButton = document.getElementById("pause");
+const titleElement = document.getElementById("title");
+const artistElement = document.getElementById("artist");
+const durationElement = document.getElementById("duration");
+const queueList = document.getElementById("queue-list");
+const queueEmpty = document.getElementsByClassName("queue-empty")[0];
 
-const title_div = document.getElementById("title");
-const artist_div = document.getElementById("artist");
-const duration_div = document.getElementById("duration");
+let currentDuration = 0;
+let isPaused = true;
+let durationUpdateFunction = null;
 
-const queue_list = document.getElementById("queue-list");
-const queue_empty = document.getElementsByClassName("queue-empty")[0];
+/**
+ * Convert seconds to formatted time string (MM:SS or HH:MM:SS)
+ * @param {number} totalSeconds - Total seconds to convert
+ * @returns {string} Formatted time string
+ */
+function formatDuration(totalSeconds) {
+  const seconds = Math.round(totalSeconds);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = Math.ceil(seconds % 60);
 
-var duration = 0;
-var is_paused = true;
-
-var stopFn = function () {};
-
-function secondsToTime(secs) {
-  secs = Math.round(secs);
-  var hours = Math.floor(secs / (60 * 60));
-
-  var divisor_for_minutes = secs % (60 * 60);
-  var minutes = Math.floor(divisor_for_minutes / 60);
-
-  var divisor_for_seconds = divisor_for_minutes % 60;
-  var seconds = Math.ceil(divisor_for_seconds);
-
-  if (hours == 0) {
-    return minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
+  if (hours === 0) {
+    return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
   } else {
-    return (
-      hours +
-      ":" +
-      (minutes < 10 ? "0" : "") +
-      minutes +
-      ":" +
-      (seconds < 10 ? "0" : "") +
-      seconds
-    );
+    return `${hours}:${minutes.toString().padStart(2, "0")}:${remainingSeconds
+      .toString()
+      .padStart(2, "0")}`;
   }
 }
 
-function increaseDuration() {
-  duration += 1;
-  duration_div.innerText = secondsToTime(duration);
+/**
+ * Update the duration display by incrementing current time
+ */
+function updateDurationDisplay() {
+  currentDuration += 1;
+  durationElement.innerText = formatDuration(currentDuration);
 }
 
-function changeSongEvent(e) {
-  if (queue_list.children.length > 1) {
-    queue_list.removeChild(queue_list.children[1]);
-    if (queue_list.children.length == 1) {
-      queue_empty.classList.remove("hidden");
+/**
+ * Handle song change events from server
+ * @param {Event} event - Server-sent event containing song data
+ */
+function handleSongChangeEvent(event) {
+  try {
+    if (queueList.children.length > 1) {
+      queueList.removeChild(queueList.children[1]);
+      if (queueList.children.length === 1) {
+        queueEmpty.classList.remove("hidden");
+      }
     }
+
+    const songData = JSON.parse(event.data);
+
+    titleElement.innerText = songData.title || "Unknown Title";
+    document.title = songData.title || "PyLive";
+    titleElement.href = songData.webpage_url || "#";
+
+    artistElement.innerText = songData.channel || "Unknown Artist";
+    artistElement.href = songData.channel_url || "#";
+
+    console.log("Song changed:", songData.title);
+  } catch (error) {
+    console.error("Error handling song change event:", error);
   }
-  data = JSON.parse(e.data);
-  title_div.innerText = data.title;
-  document.title = data.title;
-  title_div.href = data.webpage_url;
-
-  artist_div.innerText = data.channel;
-  artist_div.href = data.channel_url;
 }
 
-function addQueueEvent(e) {
-  data = JSON.parse(e.data);
-  queue_empty.classList.add("hidden");
+/**
+ * Handle queue addition events from server
+ * @param {Event} event - Server-sent event containing queue item data
+ */
+function handleQueueAddEvent(event) {
+  try {
+    const queueData = JSON.parse(event.data);
+    queueEmpty.classList.add("hidden");
 
-  var _d = document.createElement("div");
-  _d.innerHTML = `<a href="${data.webpage_url}" class="text" id="title">${data.title}</a>
-    <a href="${data.channel_url}" class="text" id="artist">${data.channel}</a>`;
-  queue_list.appendChild(_d);
+    const queueItem = document.createElement("div");
+    queueItem.innerHTML = `
+      <a href="${queueData.webpage_url || "#"}" class="text" id="title">${
+      queueData.title || "Unknown Title"
+    }</a>
+      <a href="${queueData.channel_url || "#"}" class="text" id="artist">${
+      queueData.channel || "Unknown Artist"
+    }</a>
+    `;
+
+    queueList.appendChild(queueItem);
+    console.log("Track added to queue:", queueData.title);
+  } catch (error) {
+    console.error("Error handling queue add event:", error);
+  }
 }
 
-function watchEvent() {
-  is_paused = false;
-  var counter = setInterval(() => {
-    increaseDuration();
+/**
+ * Start duration tracking when playback begins
+ * @returns {Function} Function to stop duration tracking
+ */
+function startDurationTracking() {
+  isPaused = false;
+  currentDuration = 0;
+
+  const intervalId = setInterval(() => {
+    if (!isPaused) {
+      updateDurationDisplay();
+    }
   }, 1000);
 
-  return function () {
-    is_paused = true;
-    clearInterval(counter);
+  return function stopTracking() {
+    isPaused = true;
+    clearInterval(intervalId);
   };
 }
 
-function voteSkip() {
+/**
+ * Send vote skip request to server
+ */
+function requestSkip() {
   fetch("/skip", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
   })
-    .then((response) => response.json())
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      return response.json();
+    })
     .then((data) => {
-      if (data.msg == "success") {
-        console.log("Vote skip success");
-      } else if (data.error == true) {
-        throw data.msg;
+      if (data.msg === "success") {
+        console.log("Skip request successful");
+      } else if (data.error === true) {
+        throw new Error(data.msg || "Skip request failed");
       }
     })
     .catch((error) => {
-      console.error("Error:", error);
+      console.error("Error requesting skip:", error);
     });
 }
 
-function addQueue(url) {
+/**
+ * Add a track to the queue
+ * @param {string} url - URL of the track to add
+ */
+function addToQueue(url) {
+  if (!url || !url.trim()) {
+    return;
+  }
+
   fetch("/add", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      url: url,
+      url: url.trim(),
     }),
   })
-    .then((response) => response.json())
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      return response.json();
+    })
     .then((data) => {
-      if (data.msg == "success") {
-        console.log("Add queue success");
+      if (data.msg === "success") {
+        console.log("Track added to queue successfully");
+      } else if (data.error === true) {
+        throw new Error(data.msg || "Failed to add track");
       }
     })
     .catch((error) => {
-      console.error("Error:", error);
+      console.error("Error adding track to queue:", error);
     });
 }
 
-function AddQueueBox() {
-  var div = document.getElementById("add-btn");
-  var input = document.getElementById("add-queue-box");
-  if (div.classList.contains("add-btn_Animate")) {
-    div.classList.remove("add-btn_Animate");
-    input.classList.remove("add-queue-box_Animate");
-    if (input.value != "") {
-      addQueue(input.value);
-      input.value = "";
+/**
+ * Toggle the add queue input box and handle submissions
+ */
+function toggleAddQueueBox() {
+  const addButton = document.getElementById("add-btn");
+  const inputBox = document.getElementById("add-queue-box");
+
+  if (addButton.classList.contains("add-btn_Animate")) {
+    addButton.classList.remove("add-btn_Animate");
+    inputBox.classList.remove("add-queue-box_Animate");
+
+    const url = inputBox.value.trim();
+    if (url) {
+      addToQueue(url);
+      inputBox.value = "";
     }
-    return;
+  } else {
+    addButton.classList.add("add-btn_Animate");
+    inputBox.classList.add("add-queue-box_Animate");
+    setTimeout(() => inputBox.focus(), 100);
   }
-  div.classList.add("add-btn_Animate");
-  input.classList.add("add-queue-box_Animate");
 }
 
-function toggleSettings() {
-  var _div_CL = document.getElementById("visualizer-setting").classList;
-  _div_CL.toggle("hidden");
-  _div_CL.toggle("active");
+/**
+ * Toggle visualizer settings panel
+ */
+function toggleVisualizerSettings() {
+  const settingsPanel = document.getElementById("visualizer-setting");
+  const classList = settingsPanel.classList;
+
+  classList.toggle("hidden");
+  classList.toggle("active");
 }
 
-document
-  .getElementById("add-queue-box")
-  .addEventListener("keyup", ({ key }) => {
-    if (key === "Enter") {
-      AddQueueBox();
-    }
+document.getElementById("add-queue-box").addEventListener("keyup", (event) => {
+  if (event.key === "Enter") {
+    toggleAddQueueBox();
+  }
+});
+
+playButton.addEventListener("click", function () {
+  playButton.classList.add("hidden");
+  pauseButton.classList.remove("hidden");
+
+  audioPlayer.src = "/stream";
+  audioPlayer.play().catch((error) => {
+    console.error("Error starting audio playback:", error);
   });
 
-play_btn.addEventListener("click", function () {
-  play_btn.classList.add("hidden");
-  pause_btn.classList.remove("hidden");
+  if (window.ctxAudio && window.ctxAudio.resume) {
+    window.ctxAudio.resume().catch((error) => {
+      console.warn("Could not resume audio context:", error);
+    });
+  }
 
-  audio_player.src = "/stream";
-  audio_player.play();
-  window.ctxAudio.resume();
-
-  stopFn = watchEvent();
+  durationUpdateFunction = startDurationTracking();
 });
 
-pause_btn.addEventListener("click", function () {
-  play_btn.classList.remove("hidden");
-  pause_btn.classList.add("hidden");
+pauseButton.addEventListener("click", function () {
+  playButton.classList.remove("hidden");
+  pauseButton.classList.add("hidden");
 
-  audio_player.src = "";
-  stopFn();
+  audioPlayer.src = "";
+  audioPlayer.pause();
+
+  if (durationUpdateFunction) {
+    durationUpdateFunction();
+    durationUpdateFunction = null;
+  }
 });
 
-var source = new EventSource("/watch_event");
-source.addEventListener("nowplaying", changeSongEvent);
-source.addEventListener("queueadd", addQueueEvent);
+try {
+  const eventSource = new EventSource("/watch_event");
+
+  eventSource.addEventListener("nowplaying", handleSongChangeEvent);
+  eventSource.addEventListener("queueadd", handleQueueAddEvent);
+
+  eventSource.addEventListener("error", function (error) {
+    console.error("EventSource error:", error);
+  });
+
+  console.log("Connected to server events");
+} catch (error) {
+  console.error("Failed to connect to server events:", error);
+}
+
+window.voteSkip = requestSkip;
+window.AddQueueBox = toggleAddQueueBox;
+window.toggleSettings = toggleVisualizerSettings;

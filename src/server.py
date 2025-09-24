@@ -1,198 +1,336 @@
 import json
+import logging
 import subprocess
 from array import array
 from queue import Queue
 from threading import Event, Lock, Thread
 from time import sleep
-from typing import Any, Generator, Union
+from typing import Generator, Union
 
 from src import extractor
-from src.general import MISSING_TYPE, run_in_thread
+from src.general import MISSING_TYPE, execute_in_thread
 from src.opusreader import OggStream
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()],
+)
+logger = logging.getLogger(__name__)
 
 MISSING = MISSING_TYPE()
 
 
-class SendEvent:
+class EventManager:
     NEXT_TRACK = "next"
     QUEUE_ADD = "queueadd"
     NOW_PLAYING = "nowplaying"
 
     def __init__(self) -> None:
-        self.event_queue = Queue()
-        self.event_data = ""
-        self.event_signal = Event()
+        logger.info("Initializing EventManager")
+
+        self._event_queue: Queue = Queue()
+        self._event_data: str = ""
+        self._event_signal: Event = Event()
 
         self._event_manager_thread = Thread(
-            target=self.manage_event, name="send_event_manager", daemon=True
+            target=self._manage_events, name="event_manager", daemon=True
         )
         self._event_manager_thread.start()
 
+        logger.debug("EventManager initialized successfully")
+
     def watch(self) -> Generator[str, None, None]:
-        if "nowplaying" in self.event_data:
-            yield self.event_data
+        logger.debug("Client connected to event stream")
+
+        if "nowplaying" in self._event_data:
+            logger.debug("Sending current now playing event to new client")
+            yield self._event_data
+
+        try:
+            while True:
+                self._event_signal.wait()
+                yield self._event_data
+        except GeneratorExit:
+            logger.debug("Client disconnected from event stream")
+
+    def _manage_events(self) -> None:
+        logger.debug("Event manager thread started")
 
         while True:
-            self.event_signal.wait()
-            yield self.event_data
+            try:
+                self._event_signal.clear()
+                event_type, event_data = self._event_queue.get()
 
-    def manage_event(self):
-        while True:
-            self.event_signal.clear()
-            data: tuple[str, dict[str, Any]] = self.event_queue.get()
-            self.event_data = f"event: {data[0]}\ndata: {json.dumps(data[1])}\n\n"
-            self.event_signal.set()
+                self._event_data = (
+                    f"event: {event_type}\ndata: {json.dumps(event_data)}\n\n"
+                )
+                self._event_signal.set()
 
-    def add_event(self, event_type: str, data: dict):
-        self.event_queue.put((event_type, data))
+                logger.debug(f"Processed event: {event_type}")
+
+            except Exception as e:
+                logger.error(f"Error processing event: {e}")
+
+    def add_event(self, event_type: str, data: dict) -> None:
+        try:
+            self._event_queue.put((event_type, data))
+            logger.debug(f"Added event to queue: {event_type}")
+        except Exception as e:
+            logger.error(f"Failed to add event to queue: {e}")
 
 
-class QueueAudioHandler:
+class AudioQueueManager:
+    """
+    Manages audio queue, streaming, and playback for the PyLive application.
+
+    This class handles:
+    - Audio queue management (user queue and auto-generated queue)
+    - FFmpeg process management for audio streaming
+    - Ogg stream processing
+    - Event broadcasting for queue changes
+    """
+
     __slots__ = (
-        "queue",
-        "auto_queue",
-        "_skip",
-        "lock",
-        "event",
-        "now_playing",
-        "header",
-        "buffer",
-        "next_signal",
-        "ffmpeg",
-        "ffmpeg_stdout",
-        "ffmpeg_stdin",
+        "_user_queue",
+        "_auto_queue",
+        "_skip_requested",
+        "_lock",
+        "_audio_event",
+        "_now_playing",
+        "_header_data",
+        "_buffer_data",
+        "_next_track_signal",
+        "_ffmpeg_process",
+        "_ffmpeg_stdout",
+        "_ffmpeg_stdin",
         "_audio_position",
-        "_audio_thread",
-        "_audio_queue_thread",
-        "event_queue",
+        "_audio_reader_thread",
+        "_queue_handler_thread",
+        "_event_manager",
     )
 
     def __init__(self):
-        # self.queue = ["https://music.youtube.com/watch?v=cUuQ5L6Obu4"]
-        self.queue: list[Union[str, dict[str, str | bool | float]]] = []
-        self.auto_queue: list[Union[str, dict[str, str | bool | float]]] = []
+        """Initialize the audio queue manager with all necessary components."""
+        logger.info("Initializing AudioQueueManager")
 
-        self._skip = False
-        self.lock = Lock()
-        self.event = Event()
-        self.now_playing: dict = {}
+        # queues and state
+        self._user_queue: list[Union[str, dict]] = []
+        self._auto_queue: list[Union[str, dict]] = []
+        self._skip_requested: bool = False
+        self._lock = Lock()
+        self._audio_event = Event()
+        self._now_playing: dict = {}
 
-        self.header = b""
-        self.buffer = b""
-
-        self.next_signal = Event()
-
-        self.event_queue = SendEvent()
-
-        self.ffmpeg = MISSING
-        self.ffmpeg = self._spawn_main_process()
-        self.ffmpeg_stdout = self.ffmpeg.stdout
-        self.ffmpeg_stdin = self.ffmpeg.stdin
-
+        # audio components
+        self._header_data: bytes = b""
+        self._buffer_data: bytes = b""
+        self._next_track_signal = Event()
         self._audio_position: int = 0
-        self._audio_thread = Thread(
-            target=self.oggstream_reader, name="audio_vroom_vroom", daemon=True
+
+        # event management
+        self._event_manager = EventManager()
+
+        # process
+        try:
+            self._ffmpeg_process = self._create_main_ffmpeg_process()
+            self._ffmpeg_stdout = self._ffmpeg_process.stdout
+            self._ffmpeg_stdin = self._ffmpeg_process.stdin
+            logger.info("FFmpeg main process initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize FFmpeg process: {e}")
+            self._ffmpeg_process = MISSING
+            self._ffmpeg_stdout = None
+            self._ffmpeg_stdin = None
+
+        self._audio_reader_thread = Thread(
+            target=self._read_ogg_stream, name="ogg_stream_reader", daemon=True
         )
-        self._audio_queue_thread = Thread(
-            target=self.queue_handler, name="queue", daemon=True
+        self._queue_handler_thread = Thread(
+            target=self._handle_queue, name="queue_handler", daemon=True
         )
-        self._audio_queue_thread.start()
-        self._audio_thread.start()
+
+        self._queue_handler_thread.start()
+        self._audio_reader_thread.start()
+
+        logger.info("AudioQueueManager initialized successfully")
 
     @property
-    def audio_duration(self):
-        if not isinstance(self.now_playing, dict):
-            return 0
-
-        return self.now_playing.get("duration", 0)
+    def audio_duration(self) -> float:
+        if not isinstance(self._now_playing, dict):
+            return 0.0
+        return self._now_playing.get("duration", 0.0)
 
     @property
-    def audio_position(self):
+    def audio_position(self) -> int:
         return self._audio_position
 
     @audio_position.setter
-    def audio_position(self, value):
-        with self.lock:
+    def audio_position(self, value: int) -> None:
+        with self._lock:
             self._audio_position = value
 
-    def populate_autoqueue(self):
-        if not self.auto_queue and not self.queue:
-            # take 2 items only
-            self.auto_queue = extractor.youtube_get_related_tracks(self.now_playing)[:2]
+    @property
+    def now_playing(self) -> dict:
+        return self._now_playing
 
-    def __add(self, url):
-        ret = extractor.create(url, process=False)
-        self.queue.append(ret)
-        self.event_queue.add_event(SendEvent.QUEUE_ADD, ret)
+    @property
+    def queue(self) -> list:
+        return self._user_queue
 
-    def add(self, url):
-        run_in_thread(self.__add, url)
+    @property
+    def auto_queue(self) -> list:
+        return self._auto_queue
 
-    def pop(self):
-        if self.queue:
-            self.auto_queue.clear()
-            return self.queue.pop(0)
+    @property
+    def event_queue(self) -> EventManager:
+        return self._event_manager
 
-        if not self.auto_queue:
-            self.populate_autoqueue()
-        return self.auto_queue.pop(0)
+    def _populate_auto_queue(self) -> None:
+        try:
+            if not self._auto_queue and not self._user_queue and self._now_playing:
+                logger.info("Populating auto queue with related tracks")
+                related_tracks = extractor.get_youtube_related_tracks(self._now_playing)
+                # Limit to 2 tracks to avoid overwhelming the queue
+                self._auto_queue = related_tracks[:2]
+                logger.debug(f"Added {len(self._auto_queue)} tracks to auto queue")
+        except Exception as e:
+            logger.error(f"Failed to populate auto queue: {e}")
+
+    def _add_to_queue(self, url: str) -> None:
+        try:
+            logger.info(f"Processing URL for queue: {url}")
+            track_info = extractor.extract_video_info(url, process=False)
+
+            if track_info:
+                self._user_queue.append(track_info)
+                self._event_manager.add_event(EventManager.QUEUE_ADD, track_info)
+                logger.info(
+                    f"Successfully added track to queue: {track_info.get('title', 'Unknown')}"
+                )
+            else:
+                logger.warning(f"Failed to extract track information from URL: {url}")
+
+        except Exception as e:
+            logger.error(f"Error adding track to queue: {e}")
+
+    def add_track(self, url: str) -> None:
+        execute_in_thread(self._add_to_queue, url, wait_for_result=False)
+
+    def get_next_track(self) -> Union[str, dict, None]:
+        try:
+            if self._user_queue:
+                self._auto_queue.clear()
+                next_track = self._user_queue.pop(0)
+                logger.debug("Retrieved track from user queue")
+                return next_track
+
+            if not self._auto_queue:
+                self._populate_auto_queue()
+
+            if self._auto_queue:
+                next_track = self._auto_queue.pop(0)
+                logger.debug("Retrieved track from auto queue")
+                return next_track
+
+            logger.debug("No tracks available in any queue")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error getting next track: {e}")
+            return None
 
     @staticmethod
-    def _spawn_main_process():
-        return subprocess.Popen(
-            [
-                "ffmpeg",
-                "-re",
-                "-i",
-                "-",
-                "-threads",
-                "2",
-                "-c:a",
-                "copy",
-                "-f",
-                "opus",
-                "-loglevel",
-                "error",
-                "pipe:1",
-            ],
-            stdout=subprocess.PIPE,
-            stdin=subprocess.PIPE,
-            stderr=None,
-        )
+    def _create_main_ffmpeg_process() -> subprocess.Popen:
+        logger.debug("Creating main FFmpeg process")
 
-    def oggstream_reader(self):
-        assert self.ffmpeg_stdout is not None, "ffmpeg stdout is None or not set"
-        pages_iter = OggStream(self.ffmpeg_stdout).iter_pages()
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-re",  # real-time
+            "-i",
+            "-",  # stdin
+            "-threads",
+            "2",
+            "-c:a",
+            "copy",
+            "-f",
+            "opus",
+            "-loglevel",
+            "error",
+            "pipe:1",  # stdout
+        ]
+
         try:
-            page = next(pages_iter)
-            if page.flag == 2:
-                self.header += b"OggS" + page.header + page.segtable + page.data
+            process = subprocess.Popen(
+                ffmpeg_cmd,
+                stdout=subprocess.PIPE,
+                stdin=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            logger.debug("Main FFmpeg process created successfully")
+            return process
+        except Exception as e:
+            logger.error(f"Failed to create FFmpeg process: {e}")
+            raise
 
-            page = next(pages_iter)
-            self.header += b"OggS" + page.header + page.segtable + page.data
+    def _read_ogg_stream(self) -> None:
+        logger.debug("Starting Ogg stream reader")
 
-            for page in pages_iter:
-                partial = array("b")
-                partial.frombytes(b"OggS" + page.header + page.segtable)
-                for data, _ in page.iter_packets():
-                    partial.frombytes(data)
-
-                self.buffer = partial.tobytes()
-                self.audio_position += 1
-                self.event.set()
-                self.event.clear()
-        except ValueError:
+        if not self._ffmpeg_stdout:
+            logger.error("FFmpeg stdout is not available")
             return
 
-    def ffmpeg_stdin_writer(self, q: Queue, sig: Event):
+        try:
+            pages_iterator = OggStream(self._ffmpeg_stdout).iter_pages()
+
+            first_page = next(pages_iterator)
+            if first_page.flag == 2:
+                self._header_data += (
+                    b"OggS" + first_page.header + first_page.segtable + first_page.data
+                )
+
+            second_page = next(pages_iterator)
+            self._header_data += (
+                b"OggS" + second_page.header + second_page.segtable + second_page.data
+            )
+
+            logger.debug("Ogg stream headers processed")
+            for page in pages_iterator:
+                try:
+                    partial_data = array("b")
+                    partial_data.frombytes(b"OggS" + page.header + page.segtable)
+
+                    for packet_data, _ in page.iter_packets():
+                        partial_data.frombytes(packet_data)
+
+                    self._buffer_data = partial_data.tobytes()
+                    self.audio_position += 1
+
+                    self._audio_event.set()
+                    self._audio_event.clear()
+
+                except Exception as e:
+                    logger.warning(f"Error processing audio page: {e}")
+
+        except StopIteration:
+            logger.info("Ogg stream ended")
+        except Exception as e:
+            logger.error(f"Error in Ogg stream reader: {e}")
+
+    def _write_to_ffmpeg(self, queue: Queue, signal: Event) -> None:
+        logger.debug("Starting FFmpeg stdin writer")
+
         while True:
-            audio_np = q.get()
-            self.audio_position = 0
+            try:
+                current_track = queue.get()
+                self.audio_position = 0
 
-            self.event_queue.add_event(SendEvent.NOW_PLAYING, audio_np)
+                logger.info(
+                    f"Starting playback: {current_track.get('title', 'Unknown')}"
+                )
+                self._event_manager.add_event(EventManager.NOW_PLAYING, current_track)
 
-            s = subprocess.Popen(
-                [
+                ffmpeg_cmd = [
                     "ffmpeg",
                     "-reconnect",
                     "1",
@@ -201,84 +339,131 @@ class QueueAudioHandler:
                     "-reconnect_delay_max",
                     "5",
                     "-i",
-                    audio_np["url"],
+                    current_track["url"],
                     "-threads",
                     "2",
                     "-b:a",
-                    "152k",
+                    "152k",  # audio bitrate
                     "-ar",
-                    "48000",
+                    "48000",  # sample rate
                     "-c:a",
                     "copy",
                     "-f",
-                    "opus",
-                    "-vn",
+                    "opus",  # output format
+                    "-vn",  # no video
                     "-loglevel",
                     "error",
                     "pipe:1",
-                ],
-                stdout=subprocess.PIPE,
-                stdin=None,
-                stderr=None,
-            )
+                ]
 
-            while True:
-                if s.poll():
-                    break
+                track_process = subprocess.Popen(
+                    ffmpeg_cmd,
+                    stdout=subprocess.PIPE,
+                    stdin=None,
+                    stderr=subprocess.PIPE,
+                )
 
-                data = s.stdout.read(8192)  # type: ignore
-                if not data or self._skip:
-                    break
-                self.ffmpeg_stdin.write(data)  # type: ignore
+                while True:
+                    if track_process.poll() is not None:
+                        break
 
-            sig.set()
-            self._skip = False
-            # self.header = b""
-            # self.buffer = b""
-            print("signal is set")
+                    if track_process.stdout is None:
+                        logger.error("Track process stdout is None")
+                        break
 
-    def queue_handler(self):
-        queue = Queue()
+                    audio_data = track_process.stdout.read(8192)
+                    if not audio_data or self._skip_requested:
+                        break
+
+                    if self._ffmpeg_stdin:
+                        self._ffmpeg_stdin.write(audio_data)
+
+                track_process.terminate()
+                signal.set()
+                self._skip_requested = False
+
+                logger.info(
+                    f"Finished playback: {current_track.get('title', 'Unknown')}"
+                )
+
+            except Exception as e:
+                logger.error(f"Error in FFmpeg stdin writer: {e}")
+                signal.set()
+
+    def _handle_queue(self) -> None:
+        logger.debug("Starting queue handler")
+
+        track_queue = Queue()
         stdin_writer_thread = Thread(
-            target=self.ffmpeg_stdin_writer,
-            args=(queue, self.next_signal),
+            target=self._write_to_ffmpeg,
+            args=(track_queue, self._next_track_signal),
             name="ffmpeg_stdin_writer",
             daemon=True,
         )
         stdin_writer_thread.start()
-        print("start stdin writer")
 
         while True:
-            self.next_signal.clear()
-            next_track = self.pop()  # type: ignore
-
             try:
-                if isinstance(next_track, str):
-                    next_track = extractor.create(next_track)  # type: ignore
-                elif not next_track.get("process", False):  # type: ignore
-                    next_track = extractor.create(next_track["webpage_url"])  # type: ignore  # noqa: E501
+                self._next_track_signal.clear()
+                next_track = self.get_next_track()
 
                 if not next_track:
+                    logger.debug("No tracks available, waiting...")
+                    sleep(1)
                     continue
-            except Exception:
-                continue
 
-            self.now_playing = next_track
-            queue.put(self.now_playing)
-            print(f"Playing {self.now_playing['title']}")
-            print("wait for signal")
-            self.next_signal.wait()
+                if isinstance(next_track, str):
+                    next_track = extractor.extract_video_info(next_track)
+                elif not next_track.get("process", False):
+                    next_track = extractor.extract_video_info(next_track["webpage_url"])
 
-    def wait_for_header(self):
+                if not next_track:
+                    logger.warning("Failed to process track, skipping")
+                    continue
+
+                self._now_playing = next_track
+                track_queue.put(self._now_playing)
+
+                logger.info(
+                    f"Queued track for playback: {next_track.get('title', 'Unknown')}"
+                )
+                self._next_track_signal.wait()
+
+            except Exception as e:
+                logger.error(f"Error in queue handler: {e}")
+                sleep(0.1)  # prevent busy loop
+
+    def wait_for_header(self) -> bytes:
+        logger.debug("Waiting for stream header data")
+
         while True:
-            if self.header:
-                return self.header
+            if self._header_data:
+                logger.debug("Stream header data available")
+                return self._header_data
             sleep(0.5)
 
-    def __skip(self):
-        track = self.pop()
-        self.queue.append(track)
-        self._skip = True
+    @property
+    def buffer(self) -> bytes:
+        return self._buffer_data
 
-    def skip(self):
-        run_in_thread(self.__skip, wait_for_result=False)
+    @property
+    def event(self) -> Event:
+        return self._audio_event
+
+    def _skip_current_track(self) -> None:
+        try:
+            logger.info("Skipping current track")
+            next_track = self.get_next_track()
+            if next_track:
+                self._user_queue.insert(0, next_track)
+            self._skip_requested = True
+        except Exception as e:
+            logger.error(f"Error skipping track: {e}")
+
+    def skip_track(self) -> None:
+        execute_in_thread(self._skip_current_track, wait_for_result=False)
+
+    def is_alive(self) -> bool:
+        return (
+            self._audio_reader_thread.is_alive() if self._audio_reader_thread else False
+        )

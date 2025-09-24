@@ -1,0 +1,15 @@
+[project]
+name = "pylive"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "flask>=3.1.2",
+    "yt-dlp>=2025.9.23",
+]
+
+[dependency-groups]
+dev = [
+    "djlint>=1.36.4",
+]
