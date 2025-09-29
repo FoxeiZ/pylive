@@ -100,6 +100,7 @@ class AudioQueueManager:
         "_now_playing",
         "_header_data",
         "_buffer_data",
+        "_audio_buffer_queue",
         "_next_track_signal",
         "_ffmpeg_process",
         "_ffmpeg_stdout",
@@ -125,6 +126,7 @@ class AudioQueueManager:
         # audio components
         self._header_data: bytes = b""
         self._buffer_data: bytes = b""
+        self._audio_buffer_queue: Queue = Queue(maxsize=50)  # limit buffer size
         self._next_track_signal = Event()
         self._audio_position: int = 0
 
@@ -303,11 +305,19 @@ class AudioQueueManager:
                     for packet_data, _ in page.iter_packets():
                         partial_data.frombytes(packet_data)
 
-                    self._buffer_data = partial_data.tobytes()
-                    self.audio_position += 1
-
-                    self._audio_event.set()
-                    self._audio_event.clear()
+                    # use queue-based buffering to prevent data loss
+                    buffer_chunk = partial_data.tobytes()
+                    try:
+                        self._audio_buffer_queue.put_nowait(buffer_chunk)
+                        self.audio_position += 1
+                        self._audio_event.set()
+                    except Exception:
+                        # queue full - drop oldest data to prevent memory buildup
+                        try:
+                            self._audio_buffer_queue.get_nowait()
+                            self._audio_buffer_queue.put_nowait(buffer_chunk)
+                        except Exception:
+                            logger.warning("Audio buffer queue management failed")
 
                 except Exception as e:
                     logger.warning(f"Error processing audio page: {e}")
@@ -324,6 +334,7 @@ class AudioQueueManager:
             try:
                 current_track = queue.get()
                 self.audio_position = 0
+                self._clear_audio_buffers()  # clear buffers for new track
 
                 logger.info(
                     f"Starting playback: {current_track.get('title', 'Unknown')}"
@@ -343,7 +354,7 @@ class AudioQueueManager:
                     "-threads",
                     "2",
                     "-b:a",
-                    "152k",  # audio bitrate
+                    "128k",  # reduced bitrate to decrease data load
                     "-ar",
                     "48000",  # sample rate
                     "-c:a",
@@ -351,6 +362,8 @@ class AudioQueueManager:
                     "-f",
                     "opus",  # output format
                     "-vn",  # no video
+                    "-bufsize",
+                    "64k",  # limit buffer size
                     "-loglevel",
                     "error",
                     "pipe:1",
@@ -371,12 +384,14 @@ class AudioQueueManager:
                         logger.error("Track process stdout is None")
                         break
 
-                    audio_data = track_process.stdout.read(8192)
+                    audio_data = track_process.stdout.read(4096)
                     if not audio_data or self._skip_requested:
                         break
 
                     if self._ffmpeg_stdin:
                         self._ffmpeg_stdin.write(audio_data)
+                        self._ffmpeg_stdin.flush()  # ensure data is sent immediately
+                    sleep(0.001)
 
                 track_process.terminate()
                 signal.set()
@@ -444,11 +459,27 @@ class AudioQueueManager:
 
     @property
     def buffer(self) -> bytes:
-        return self._buffer_data
+        try:
+            # get the latest buffer chunk without blocking
+            return self._audio_buffer_queue.get_nowait()
+        except Exception:
+            # return empty bytes if no data available
+            return b""
 
     @property
     def event(self) -> Event:
         return self._audio_event
+
+    def _clear_audio_buffers(self) -> None:
+        """Clear all audio buffers to prevent accumulation between tracks."""
+        try:
+            while not self._audio_buffer_queue.empty():
+                self._audio_buffer_queue.get_nowait()
+            self._header_data = b""
+            self._buffer_data = b""
+            logger.debug("Audio buffers cleared")
+        except Exception as e:
+            logger.warning(f"Error clearing audio buffers: {e}")
 
     def _skip_current_track(self) -> None:
         try:
