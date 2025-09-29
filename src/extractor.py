@@ -313,11 +313,14 @@ def get_youtube_related_tracks(current_track: dict) -> list:
             if count >= MAX_RELATED_TRACKS:
                 break
 
-            compact_video = item.get("compactVideoRenderer")
-            if not compact_video:
+            lockup_view_model = item.get("lockupViewModel")
+            if not lockup_view_model:
                 continue
 
-            video_id = compact_video.get("videoId")
+            if lockup_view_model.get("contentType") != "LOCKUP_CONTENT_TYPE_VIDEO":
+                continue
+
+            video_id = lockup_view_model.get("contentId")
             if video_id:
                 related_urls.append(f"https://www.youtube.com/watch?v={video_id}")
 
