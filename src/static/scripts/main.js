@@ -117,7 +117,7 @@ function startDurationTracking() {
  * Send vote skip request to server
  */
 function requestSkip() {
-  fetch("/skip", {
+  fetch("/queue/skip", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -150,7 +150,7 @@ function addToQueue(url) {
     return;
   }
 
-  fetch("/add", {
+  fetch("/queue/add", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

@@ -7,13 +7,13 @@ from typing import Generator
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
-from src.errors import (
+from .errors import (
     PlaylistNotFoundException,
     VideoIsLiveException,
     VideoIsOverLengthException,
     VideoIsUnavailableException,
 )
-from src.general import HTTPRequestManager
+from .utils.general import HTTPRequestManager
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,7 @@ YTDL_OPTIONS = {
     "compat_opts": ["no-youtube-unavailable-videos"],
     "playlistend": 10,
     "playlistrandom": True,
+    "cookiesfrombrowser": ("firefox",),
 }
 
 MAX_DURATION_SECONDS = 900.0  # 15 minutes

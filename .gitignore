@@ -5,6 +5,10 @@ output
 *test*
 sample*
 dump*
+*.log
+*.backup
 
 # skip hidden file
 .*
+
+!.vscode

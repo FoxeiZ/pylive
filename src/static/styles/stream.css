@@ -1,0 +1,189 @@
+.player-control {
+  display: flex;
+  min-width: 1024px;
+  width: 100%;
+  padding: 10px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.hidden {
+  /* display: none !important; */
+  height: 0 !important;
+  width: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
+.active {
+  /* display: block; */
+  opacity: 1 !important;
+  visibility: visible !important;
+  transition: visibility 0s, opacity 0.5s linear;
+}
+
+.ctrl-button {
+  display: flex;
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
+  background: var(--div-color);
+  justify-content: center;
+  align-items: center;
+}
+
+.click-btn {
+  cursor: pointer;
+}
+
+.click-btn img {
+  display: block;
+}
+
+.metatag {
+  position: relative;
+  display: flex;
+  height: 64px;
+  width: 100%;
+  border-radius: 10px;
+  background: var(--div-color);
+  padding: 0px 12px 0px 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#duration {
+  position: absolute;
+  right: 12px;
+}
+
+.song-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.text {
+  text-decoration: none;
+  color: black;
+  font-size: large;
+  max-width: 30vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#artist {
+  font-weight: 500;
+}
+
+.queue {
+  min-width: 1024px;
+  min-height: 240px;
+  width: 100%;
+  padding: 32px 10px;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.queue-header {
+  display: flex;
+  justify-content: space-between;
+  padding-bottom: 12px;
+  align-items: center;
+}
+
+.queue-main-title {
+  display: flex;
+  gap: 12px;
+  color: #fff;
+}
+
+#add-btn {
+  color: white;
+  font-size: larger;
+  transition: all 0.2s ease-in-out;
+}
+
+.add-btn_Animate {
+  transform: rotate(45deg);
+}
+
+#add-queue-box {
+  height: 0;
+  visibility: hidden;
+  border-radius: 10px;
+  transition: height 0.2s ease-in-out;
+}
+
+.add-queue-box_Animate {
+  height: 25px !important;
+  visibility: visible !important;
+}
+
+.skip-btn,
+.toggle-visual {
+  margin: auto;
+  color: #fff;
+  font-size: small;
+}
+
+.skip-btn {
+  padding-top: 4px;
+}
+
+.queue-content {
+  width: 100%;
+  height: 100%;
+  min-height: 240px;
+  background: var(--div-color);
+  border-radius: 10px;
+}
+
+.queue-wrapper {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+}
+
+.queue-empty {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+#visualizer {
+  cursor: pointer;
+}
+
+#visualizer-setting {
+  display: flex;
+  flex-direction: row;
+  padding: 32px 10px;
+  gap: 10px;
+  justify-content: space-evenly;
+  flex-wrap: wrap;
+}
+
+.setting-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.setting-box label {
+  color: #fff;
+}
+
+.setting-box select,
+.setting-box input {
+  border-radius: 10px;
+  height: 25px;
+  text-indent: 5px;
+}
