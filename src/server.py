@@ -2,8 +2,8 @@ import json
 import logging
 import subprocess
 from array import array
-from queue import Queue
-from threading import Event, Thread
+from queue import Empty, Queue
+from threading import Event, Lock, Thread
 from time import sleep
 from typing import Generator, Union
 
@@ -11,11 +11,6 @@ from . import extractor
 from .opusreader import OggStream
 from .utils.general import MISSING_TYPE, execute_in_thread
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler()],
-)
 logger = logging.getLogger(__name__)
 
 MISSING = MISSING_TYPE()
@@ -32,6 +27,7 @@ class EventManager:
         self._event_queue: Queue = Queue()
         self._event_data: str = ""
         self._event_signal: Event = Event()
+        self._shutdown_requested: bool = False
 
         self._event_manager_thread = Thread(
             target=self._manage_events, name="event_manager", daemon=True
@@ -48,19 +44,22 @@ class EventManager:
             yield self._event_data
 
         try:
-            while True:
-                self._event_signal.wait()
-                yield self._event_data
+            while not self._shutdown_requested:
+                if self._event_signal.wait(timeout=1.0):
+                    yield self._event_data
+                    self._event_signal.clear()
         except GeneratorExit:
             logger.debug("Client disconnected from event stream")
 
     def _manage_events(self) -> None:
         logger.debug("Event manager thread started")
 
-        while True:
+        while not self._shutdown_requested:
             try:
-                self._event_signal.clear()
-                event_type, event_data = self._event_queue.get()
+                try:
+                    event_type, event_data = self._event_queue.get(timeout=1.0)
+                except Empty:
+                    continue
 
                 self._event_data = (
                     f"event: {event_type}\ndata: {json.dumps(event_data)}\n\n"
@@ -71,13 +70,24 @@ class EventManager:
 
             except Exception as e:
                 logger.error(f"Error processing event: {e}")
+                sleep(0.1)  # prevent busy loop on repeated errors
+
+        logger.debug("Event manager thread stopping")
 
     def add_event(self, event_type: str, data: dict) -> None:
+        if self._shutdown_requested:
+            return
+
         try:
-            self._event_queue.put((event_type, data))
+            self._event_queue.put((event_type, data), timeout=1.0)
             logger.debug(f"Added event to queue: {event_type}")
         except Exception as e:
             logger.error(f"Failed to add event to queue: {e}")
+
+    def shutdown(self) -> None:
+        logger.info("Shutting down EventManager")
+        self._shutdown_requested = True
+        self._event_signal.set()
 
 
 class AudioQueueManager:
@@ -93,6 +103,8 @@ class AudioQueueManager:
 
     __slots__ = (
         "_stopped",
+        "_shutdown_lock",
+        "_queue_lock",
         "_user_queue",
         "_auto_queue",
         "_skip_requested",
@@ -108,13 +120,15 @@ class AudioQueueManager:
         "_audio_reader_thread",
         "_queue_handler_thread",
         "_event_manager",
+        "_track_processes",
     )
 
     def __init__(self):
-        """Initialize the audio queue manager with all necessary components."""
         logger.info("Initializing AudioQueueManager")
 
         self._stopped: bool = False
+        self._shutdown_lock = Lock()
+        self._queue_lock = Lock()  # add queue lock for thread safety
 
         # queues and state
         self._user_queue: list[Union[str, dict]] = []
@@ -130,11 +144,16 @@ class AudioQueueManager:
 
         # track management
         self._next_track_signal = Event()
+        self._track_processes: list[subprocess.Popen] = []
 
         # event management
         self._event_manager = EventManager()
 
         # process
+        self._ffmpeg_process = MISSING
+        self._ffmpeg_stdout = None
+        self._ffmpeg_stdin = None
+
         try:
             self._ffmpeg_process = self._create_main_ffmpeg_process()
             self._ffmpeg_stdout = self._ffmpeg_process.stdout
@@ -142,6 +161,16 @@ class AudioQueueManager:
             logger.info("FFmpeg main process initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize FFmpeg process: {e}")
+            # ensure cleanup if partial initialization occurred
+            if self._ffmpeg_process and self._ffmpeg_process != MISSING:
+                try:
+                    self._ffmpeg_process.terminate()
+                    try:
+                        self._ffmpeg_process.wait(timeout=5.0)  # pyright: ignore[reportCallIssue]
+                    except subprocess.TimeoutExpired:
+                        self._ffmpeg_process.kill()
+                except Exception:
+                    pass
             self._ffmpeg_process = MISSING
             self._ffmpeg_stdout = None
             self._ffmpeg_stdin = None
@@ -174,19 +203,24 @@ class AudioQueueManager:
 
     @property
     def queue(self) -> list:
-        return self._user_queue
+        with self._queue_lock:
+            return self._user_queue.copy()
 
     @property
     def auto_queue(self) -> list:
-        return self._auto_queue
+        with self._queue_lock:
+            return self._auto_queue.copy()
 
     @property
     def event_queue(self) -> EventManager:
         return self._event_manager
 
     def _populate_auto_queue(self) -> None:
+        if self._stopped:
+            return
+
         try:
-            if not self._auto_queue and not self._user_queue and self._now_playing:
+            if not self._auto_queue and self._now_playing:
                 logger.info("Populating auto queue with related tracks")
                 self._auto_queue = extractor.get_youtube_related_tracks(
                     self._now_playing
@@ -196,12 +230,16 @@ class AudioQueueManager:
             logger.error(f"Failed to populate auto queue: {e}")
 
     def _add_to_queue(self, url: str) -> None:
+        if self._stopped:
+            return
+
         try:
             logger.info(f"Processing URL for queue: {url}")
             track_info = extractor.extract_video_info(url, process=False)
 
             if track_info:
-                self._user_queue.append(track_info)
+                with self._queue_lock:
+                    self._user_queue.append(track_info)
                 self._event_manager.add_event(EventManager.QUEUE_ADD, track_info)
                 logger.info(
                     f"Successfully added track to queue: {track_info.get('title', 'Unknown')}"
@@ -213,20 +251,24 @@ class AudioQueueManager:
             logger.error(f"Error adding track to queue: {e}")
 
     def add_track(self, url: str) -> None:
-        execute_in_thread(self._add_to_queue, url, wait_for_result=False)
+        if not self._stopped:
+            execute_in_thread(self._add_to_queue, url, wait_for_result=False)
 
     def get_next_track(self) -> Union[str, dict, None]:
+        if self._stopped:
+            return None
+
         try:
-            if self._user_queue:
-                self._auto_queue.clear()
-                next_track = self._user_queue.pop(0)
-                logger.debug("Retrieved track from user queue")
-                return next_track
+            with self._queue_lock:
+                if self._user_queue:
+                    self._auto_queue.clear()
+                    next_track = self._user_queue.pop(0)
+                    logger.debug("Retrieved track from user queue")
+                    return next_track
 
             if not self._auto_queue:
                 self._populate_auto_queue()
-
-            if self._auto_queue:
+            else:
                 next_track = self._auto_queue.pop(0)
                 logger.debug("Retrieved track from auto queue")
                 return next_track
@@ -295,6 +337,9 @@ class AudioQueueManager:
 
             logger.debug("Ogg stream headers processed")
             for page in pages_iterator:
+                if self._stopped:
+                    break
+
                 try:
                     partial_data = array("b")
                     partial_data.frombytes(b"OggS" + page.header + page.segtable)
@@ -312,14 +357,40 @@ class AudioQueueManager:
         except StopIteration:
             logger.info("Ogg stream ended")
         except Exception as e:
-            logger.error(f"Error in Ogg stream reader: {e}")
+            if not self._stopped:
+                logger.error(f"Error in Ogg stream reader: {e}")
+
+        logger.debug("Ogg stream reader thread stopping")
+
+    def _cleanup_track_process(self, process: subprocess.Popen) -> None:
+        try:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=3.0)  # pyright: ignore[reportCallIssue]
+                except subprocess.TimeoutExpired:
+                    logger.warning("Track process did not terminate, killing")
+                    process.kill()
+
+            if process in self._track_processes:
+                self._track_processes.remove(process)
+
+        except Exception as e:
+            logger.error(f"Error cleaning up track process: {e}")
 
     def _write_to_ffmpeg(self, queue: Queue, signal: Event) -> None:
         logger.debug("Starting FFmpeg stdin writer")
 
-        while not self.stopped:
+        while not self._stopped:
             try:
-                current_track = queue.get()
+                try:
+                    current_track = queue.get(timeout=1.0)
+                except Empty:
+                    continue
+
+                if self._stopped:
+                    break
+
                 logger.info(
                     f"Starting playback: {current_track.get('title', 'Unknown')}"
                 )
@@ -360,7 +431,9 @@ class AudioQueueManager:
                     stderr=subprocess.PIPE,
                 )
 
-                while not self.stopped:
+                self._track_processes.append(track_process)
+
+                while not self._stopped:
                     if track_process.poll() is not None:
                         break
 
@@ -369,15 +442,19 @@ class AudioQueueManager:
                         break
 
                     audio_data = track_process.stdout.read(4096)
-                    if not audio_data or self._skip_requested or self.stopped:
+                    if not audio_data or self._skip_requested or self._stopped:
                         break
 
-                    if self._ffmpeg_stdin:
-                        self._ffmpeg_stdin.write(audio_data)
-                        self._ffmpeg_stdin.flush()  # ensure data is sent immediately
+                    if self._ffmpeg_stdin and not self._stopped:
+                        try:
+                            self._ffmpeg_stdin.write(audio_data)
+                            self._ffmpeg_stdin.flush()
+                        except (BrokenPipeError, OSError) as e:
+                            logger.error(f"Error writing to FFmpeg stdin: {e}")
+                            break
                     sleep(0.001)
 
-                track_process.terminate()
+                self._cleanup_track_process(track_process)
                 signal.set()
                 self._skip_requested = False
 
@@ -388,6 +465,8 @@ class AudioQueueManager:
             except Exception as e:
                 logger.error(f"Error in FFmpeg stdin writer: {e}")
                 signal.set()
+
+        logger.debug("FFmpeg stdin writer thread stopping")
 
     def _handle_queue(self) -> None:
         logger.debug("Starting queue handler")
@@ -401,14 +480,15 @@ class AudioQueueManager:
         )
         stdin_writer_thread.start()
 
-        while not self.stopped:
+        while not self._stopped:
             try:
                 self._next_track_signal.clear()
                 next_track = self.get_next_track()
 
                 if not next_track:
-                    logger.debug("No tracks available, waiting...")
-                    sleep(1)
+                    if not self._stopped:
+                        logger.debug("No tracks available, waiting...")
+                        sleep(1)
                     continue
 
                 if isinstance(next_track, str):
@@ -420,33 +500,42 @@ class AudioQueueManager:
                     logger.warning("Failed to process track, skipping")
                     continue
 
+                if self._stopped:
+                    break
+
                 self._now_playing = next_track
                 track_queue.put(self._now_playing)
 
                 logger.info(
                     f"Queued track for playback: {next_track.get('title', 'Unknown')}"
                 )
+
                 self._next_track_signal.wait()
 
             except Exception as e:
                 logger.error(f"Error in queue handler: {e}")
                 sleep(0.1)  # prevent busy loop
 
+        logger.debug("Queue handler thread stopping")
+
     def wait_for_header(self) -> bytes:
         logger.debug("Waiting for stream header data")
 
-        self._audio_header_event.wait()
-        if not self._header_data or not self.is_alive() or self.stopped:
-            logger.error("No header data available after waiting, is process running?")
-            raise InterruptedError
+        if not self._audio_header_event.wait(timeout=30.0):
+            logger.error("Timeout waiting for stream header data")
+            raise TimeoutError("Header data not available within timeout period")
+
+        if not self._header_data or not self.is_alive() or self._stopped:
+            logger.error("No header data available after waiting")
+            raise InterruptedError("Stream not available")
 
         logger.debug("Stream header data available")
         return self._header_data
 
     @property
     def buffer(self) -> bytes:
-        if not self._buffer_data or not self.is_alive() or self.stopped:
-            raise InterruptedError
+        if not self._buffer_data and self.is_alive() or self._stopped:
+            raise InterruptedError("Buffer not available")
         return self._buffer_data
 
     @property
@@ -454,33 +543,62 @@ class AudioQueueManager:
         return self._audio_buffer_event
 
     def _skip_current_track(self) -> None:
+        if self._stopped:
+            return
+
         try:
             logger.info("Skipping current track")
             next_track = self.get_next_track()
             if next_track:
-                self._user_queue.insert(0, next_track)
+                with self._queue_lock:
+                    self._user_queue.insert(0, next_track)
             self._skip_requested = True
         except Exception as e:
             logger.error(f"Error skipping track: {e}")
 
     def skip_track(self) -> None:
-        execute_in_thread(self._skip_current_track, wait_for_result=False)
+        if not self._stopped:
+            execute_in_thread(self._skip_current_track, wait_for_result=False)
 
     def is_alive(self) -> bool:
         return (
             self._audio_reader_thread.is_alive() if self._audio_reader_thread else False
-        )
+        ) and not self._stopped
 
     def shutdown(self) -> None:
-        self._stopped = True
-        try:
-            if self._ffmpeg_process:
-                self._ffmpeg_process.terminate()
-                self._ffmpeg_process.wait(timeout=5)  # pyright: ignore[reportCallIssue]
-                logger.info("FFmpeg process terminated successfully")
-        except Exception as e:
-            logger.error(f"Error terminating FFmpeg process: {e}")
-        self._audio_buffer_event.set()
-        self._audio_header_event.set()
-        self._next_track_signal.set()
-        logger.info("AudioQueueManager shutdown complete")
+        """Gracefully shutdown the audio queue manager."""
+        with self._shutdown_lock:
+            if self._stopped:
+                return
+
+            logger.info("Shutting down AudioQueueManager")
+            self._stopped = True
+
+            self._event_manager.shutdown()
+
+            for process in self._track_processes[:]:
+                self._cleanup_track_process(process)
+
+            try:
+                if self._ffmpeg_process and self._ffmpeg_process != MISSING:
+                    if self._ffmpeg_stdin:
+                        self._ffmpeg_stdin.close()
+                    if self._ffmpeg_stdout:
+                        self._ffmpeg_stdout.close()
+
+                    self._ffmpeg_process.terminate()
+                    try:
+                        self._ffmpeg_process.wait(timeout=5.0)  # pyright: ignore[reportCallIssue]
+                    except subprocess.TimeoutExpired:
+                        logger.warning("Main FFmpeg process did not terminate, killing")
+                        self._ffmpeg_process.kill()
+                    logger.info("FFmpeg process terminated successfully")
+            except Exception as e:
+                logger.error(f"Error terminating FFmpeg process: {e}")
+
+            # signal all events to unblock waiting threads
+            self._audio_buffer_event.set()
+            self._audio_header_event.set()
+            self._next_track_signal.set()
+
+            logger.info("AudioQueueManager shutdown complete")

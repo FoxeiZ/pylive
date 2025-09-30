@@ -24,8 +24,8 @@ def generate_audio_stream(audio_manager: AudioQueueManager):
     try:
         yield audio_manager.wait_for_header()
         while audio_manager.is_alive():
-            yield audio_manager.buffer
             audio_manager.event.wait()
+            yield audio_manager.buffer
     except InterruptedError:
         logger.info("Audio stream generation interrupted")
         return
