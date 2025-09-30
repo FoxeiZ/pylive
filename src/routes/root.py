@@ -22,13 +22,13 @@ def generate_audio_stream(audio_manager: AudioQueueManager):
     logger.debug("Starting audio stream generation")
 
     try:
-        # Send header data first
         yield audio_manager.wait_for_header()
-
-        # Stream audio data while alive
         while audio_manager.is_alive():
             yield audio_manager.buffer
             audio_manager.event.wait()
+    except InterruptedError:
+        logger.info("Audio stream generation interrupted")
+        return
 
     except Exception as e:
         logger.error(f"Error in audio stream generation: {e}")

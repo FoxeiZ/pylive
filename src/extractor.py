@@ -310,8 +310,8 @@ def get_youtube_related_tracks(current_track: dict) -> list:
             return []
 
         related_urls = []
-        for count, item in enumerate(secondary_results):
-            if count >= MAX_RELATED_TRACKS:
+        for item in secondary_results:
+            if len(related_urls) >= MAX_RELATED_TRACKS:
                 break
 
             lockup_view_model = item.get("lockupViewModel")
