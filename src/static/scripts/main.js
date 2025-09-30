@@ -1,8 +1,8 @@
 const audioPlayer = document.getElementById("main-player");
 const playButton = document.getElementById("play");
 const pauseButton = document.getElementById("pause");
-const titleElement = document.getElementById("title");
-const artistElement = document.getElementById("artist");
+const titleElement = document.querySelector(".queue-item-title");
+const artistElement = document.querySelector(".song-link--artist");
 const durationElement = document.getElementById("duration");
 const queueList = document.getElementById("queue-list");
 const queueEmpty = document.getElementsByClassName("queue-empty")[0];
@@ -76,14 +76,17 @@ function handleQueueAddEvent(event) {
     const queueData = JSON.parse(event.data);
     queueEmpty.classList.add("hidden");
 
-    const queueItem = document.createElement("div");
+    const queueItem = document.createElement("article");
+    queueItem.className = "queue-item";
     queueItem.innerHTML = `
-      <a href="${queueData.webpage_url || "#"}" class="text" id="title">${
-      queueData.title || "Unknown Title"
-    }</a>
-      <a href="${queueData.channel_url || "#"}" class="text" id="artist">${
-      queueData.channel || "Unknown Artist"
-    }</a>
+      <a href="${queueData.webpage_url || "#"}" 
+         class="queue-item-link queue-item-title"
+         target="_blank"
+         rel="noopener noreferrer">${queueData.title || "Unknown Title"}</a>
+      <a href="${queueData.channel_url || "#"}" 
+         class="queue-item-link queue-item-artist"
+         target="_blank"
+         rel="noopener noreferrer">${queueData.channel || "Unknown Artist"}</a>
     `;
 
     queueList.appendChild(queueItem);
@@ -184,9 +187,9 @@ function toggleAddQueueBox() {
   const addButton = document.getElementById("add-btn");
   const inputBox = document.getElementById("add-queue-box");
 
-  if (addButton.classList.contains("add-btn_Animate")) {
-    addButton.classList.remove("add-btn_Animate");
-    inputBox.classList.remove("add-queue-box_Animate");
+  if (addButton.classList.contains("add-track-btn--rotated")) {
+    addButton.classList.remove("add-track-btn--rotated");
+    inputBox.classList.remove("add-track-input--visible");
 
     const url = inputBox.value.trim();
     if (url) {
@@ -194,8 +197,8 @@ function toggleAddQueueBox() {
       inputBox.value = "";
     }
   } else {
-    addButton.classList.add("add-btn_Animate");
-    inputBox.classList.add("add-queue-box_Animate");
+    addButton.classList.add("add-track-btn--rotated");
+    inputBox.classList.add("add-track-input--visible");
     setTimeout(() => inputBox.focus(), 100);
   }
 }
@@ -205,10 +208,14 @@ function toggleAddQueueBox() {
  */
 function toggleVisualizerSettings() {
   const settingsPanel = document.getElementById("visualizer-setting");
-  const classList = settingsPanel.classList;
 
-  classList.toggle("hidden");
-  classList.toggle("active");
+  if (settingsPanel.classList.contains("hidden")) {
+    settingsPanel.classList.remove("hidden");
+    settingsPanel.classList.add("visualizer-settings--visible");
+  } else {
+    settingsPanel.classList.add("hidden");
+    settingsPanel.classList.remove("visualizer-settings--visible");
+  }
 }
 
 document.getElementById("add-queue-box").addEventListener("keyup", (event) => {

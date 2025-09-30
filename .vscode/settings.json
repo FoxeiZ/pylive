@@ -16,6 +16,7 @@
     "djlint.ignore": [
         "J018", // Internal links should use the {{ url_for() ... }} pattern. 
         "H031", // Consider adding meta keywords
+        "H030", // Consider adding a meta description
         "H006", // Img tag should have height and width attributes
     ],
     "djlint.profile": "handlebars",
@@ -31,6 +32,14 @@
         "**/.hg": true,
         "**/.DS_Store": true,
         "**/Thumbs.db": true,
-        "**/.venv": true
+        "**/.venv": true,
+        "**/.ruff_cache": true
+    },
+    "files.watcherExclude": {
+        "**/.git/objects/**": true,
+        "**/.git/subtree-cache/**": true,
+        "**/.hg/store/**": true,
+        "**/.venv": true,
+        "**/.ruff_cache": true
     }
 }

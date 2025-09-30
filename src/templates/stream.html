@@ -4,142 +4,186 @@
           href="{{ url_for('static', filename='styles/stream.css') }}">
 {% endblock head %}
 {% block content %}
-    <div class="player-control">
-        <audio id="main-player" src></audio>
+    <!-- Player Controls Section -->
+    <section class="player-control">
+        <audio id="main-player" src aria-label="Audio player"></audio>
+        <!-- Play/Pause Button -->
         <div class="ctrl-button">
-            <div id="play" class="click-btn">
+            <button id="play" class="click-btn" aria-label="Play audio">
                 <img src="{{ url_for('static', filename='images/play.svg') }}"
                      alt=""
-                     height="48"
-                     width="48">
-            </div>
-            <div id="pause" class="click-btn hidden">
+                     width="48"
+                     height="48">
+            </button>
+            <button id="pause" class="click-btn hidden" aria-label="Pause audio">
                 <img src="{{ url_for('static', filename='images/pause.svg') }}"
                      alt=""
-                     height="48"
-                     width="48">
-            </div>
+                     width="48"
+                     height="48">
+            </button>
         </div>
+        <!-- Track Metadata -->
         <div class="metatag">
             <div class="song-info">
-                <a href="{{ np['webpage_url'] }}" class="text" id="title">{{ np['title'] }}</a>
-                <a href="{{ np['channel_url'] }}" class="text" id="artist">{{ np['channel'] }}</a>
+                <a href="{{ np['webpage_url'] }}"
+                   class="song-link queue-item-title"
+                   target="_blank"
+                   rel="noopener noreferrer">{{ np['title'] }}</a>
+                <a href="{{ np['channel_url'] }}"
+                   class="song-link song-link--artist"
+                   target="_blank"
+                   rel="noopener noreferrer">{{ np['channel'] }}</a>
             </div>
-            <canvas onclick="toggleSettings()" width="720" height="64" id="visualizer"></canvas>
-            <div id="duration">00:00</div>
+            <canvas class="visualizer"
+                    onclick="toggleSettings()"
+                    width="720"
+                    height="64"
+                    id="visualizer"
+                    tabindex="0"
+                    role="button"
+                    aria-label="Toggle visualizer settings"></canvas>
+            <div class="duration-display" id="duration">00:00</div>
         </div>
-    </div>
-    <div class="hidden" id="visualizer-setting">
-        <div class="setting-box">
-            <label for="visualizer-fps">FPS</label>
-            <input onchange="visualizer.setFrameRate(this.value)"
+    </section>
+    <!-- Visualizer Settings Panel -->
+    <section class="visualizer-settings hidden"
+             id="visualizer-setting"
+             aria-label="Visualizer configuration">
+        <div class="setting-group">
+            <label class="setting-label" for="visualizer-fps">FPS</label>
+            <input class="setting-input"
+                   onchange="visualizer.setFrameRate(this.value)"
                    type="number"
                    min="1"
+                   max="120"
                    id="visualizer-fps"
                    value="48"
-                   placeholder="48">
+                   aria-describedby="fps-desc">
+            <small id="fps-desc" class="visually-hidden">Frames per second for visualizer animation</small>
         </div>
-        <div class="setting-box">
-            <label for="visualizer-thickness">Thickness</label>
-            <input onchange="visualizer.setThickness(this.value)"
+        <div class="setting-group">
+            <label class="setting-label" for="visualizer-thickness">Thickness</label>
+            <input class="setting-input"
+                   onchange="visualizer.setThickness(this.value)"
                    type="number"
                    step="0.1"
                    min="0.1"
+                   max="10"
                    id="visualizer-thickness"
-                   placeholder="1"
                    value="1">
         </div>
-        <div class="setting-box">
-            <label for="visualizer-color">Color</label>
-            <input onchange="visualizer.setColor(this.value)"
+        <div class="setting-group">
+            <label class="setting-label" for="visualizer-color">Color</label>
+            <input class="setting-input"
+                   onchange="visualizer.setColor(this.value)"
                    type="text"
                    id="visualizer-color"
                    placeholder="black"
                    value="black">
         </div>
-        <div class="setting-box">
-            <label for="visualizer-sensitivity">Sensitivity</label>
-            <input onchange="visualizer.setSensitivity(this.value)"
+        <div class="setting-group">
+            <label class="setting-label" for="visualizer-sensitivity">Sensitivity</label>
+            <input class="setting-input"
+                   onchange="visualizer.setSensitivity(this.value)"
                    min="0"
                    max="1"
                    step="0.1"
                    type="number"
                    id="visualizer-sensitivity"
-                   placeholder="0.6"
                    value="0.6">
         </div>
-        <div class="setting-box">
-            <label for="visualizer-type">Type</label>
-            <select onchange="visualizer.setVisualizationType(this.value)"
+        <div class="setting-group">
+            <label class="setting-label" for="visualizer-type">Type</label>
+            <select class="setting-select"
+                    onchange="visualizer.setVisualizationType(this.value)"
                     id="visualizer-type">
                 <option value="bars">Bars</option>
                 <option value="oscilloscope">Oscilloscope</option>
             </select>
         </div>
-        <div class="setting-box">
-            <label for="visualizer-multiplier">Multiplier</label>
-            <input onchange="visualizer.setAmplitudeMultiplier(this.value)"
+        <div class="setting-group">
+            <label class="setting-label" for="visualizer-multiplier">Multiplier</label>
+            <input class="setting-input"
+                   onchange="visualizer.setAmplitudeMultiplier(this.value)"
                    type="number"
                    min="0"
+                   max="10"
                    step="0.1"
                    id="visualizer-multiplier"
-                   placeholder="1"
                    value="1">
         </div>
-        <div class="setting-box">
-            <label for="visualizer-minDecibels">Min Decibels</label>
-            <input onchange="visualizer.setMinDecibels(this.value)"
+        <div class="setting-group">
+            <label class="setting-label" for="visualizer-minDecibels">Min Decibels</label>
+            <input class="setting-input"
+                   onchange="visualizer.setMinDecibels(this.value)"
                    min="-100"
                    max="0"
-                   type="text"
+                   type="number"
                    id="visualizer-minDecibels"
-                   placeholder="-100"
                    value="-62">
         </div>
-        <div class="setting-box">
-            <label for="visualizer-maxDecibels">Max Decibels</label>
-            <input onchange="visualizer.setMaxDecibels(this.value)"
+        <div class="setting-group">
+            <label class="setting-label" for="visualizer-maxDecibels">Max Decibels</label>
+            <input class="setting-input"
+                   onchange="visualizer.setMaxDecibels(this.value)"
                    min="-100"
                    max="0"
                    type="number"
                    id="visualizer-maxDecibels"
-                   placeholder="-30"
                    value="-30">
         </div>
-    </div>
-    <div class="queue">
-        <div class="queue-header">
-            <div class="queue-main-title">
-                Queue
-                <button onclick="AddQueueBox()" class="no-select" id="add-btn">+</button>
-                <input id="add-queue-box" type="text">
+    </section>
+    <!-- Queue Section -->
+    <section class="queue">
+        <header class="queue-header">
+            <div class="queue-title">
+                <h2>Queue</h2>
+                <button class="add-track-btn no-select"
+                        onclick="AddQueueBox()"
+                        id="add-btn"
+                        aria-label="Add track to queue">+</button>
+                <input class="add-track-input"
+                       id="add-queue-box"
+                       type="url"
+                       placeholder="Enter YouTube URL"
+                       aria-label="YouTube URL input">
             </div>
             <div class="queue-controls">
-                <button class="toggle-visual" onclick="visualizer.toggleAnimation()">Toggle visualizer</button>
-                <button class="skip-btn" onclick="voteSkip()">Vote skip</button>
+                <button class="queue-btn"
+                        onclick="visualizer.toggleAnimation()"
+                        aria-label="Toggle visualizer">Toggle visualizer</button>
+                <button class="queue-btn"
+                        onclick="voteSkip()"
+                        aria-label="Vote to skip current track">Vote skip</button>
             </div>
-        </div>
+        </header>
         <div class="queue-content">
             <div id="queue-list" class="queue-wrapper">
                 <div class="queue-empty{% if queue %} hidden{% endif %}">
                     <img class="empty-queue-image"
                          src="{{ url_for('static', filename='images/kanna.gif') }}"
-                         alt=""
-                         height="200"
-                         width="156">
-                    Nothing here... yet
+                         alt="Empty queue illustration"
+                         width="156"
+                         height="200">
+                    <p>Nothing here... yet</p>
                 </div>
                 {% if queue %}
                     {% for q in queue %}
-                        <div>
-                            <a href="{{ q['webpage_url'] }}" class="text" id="title">{{ q['title'] }}</a>
-                            <a href="{{ q['channel_url'] }}" class="text" id="artist">{{ q['channel'] }}</a>
-                        </div>
+                        <article class="queue-item">
+                            <a href="{{ q['webpage_url'] }}"
+                               class="queue-item-link queue-item-title"
+                               target="_blank"
+                               rel="noopener noreferrer">{{ q['title'] }}</a>
+                            <a href="{{ q['channel_url'] }}"
+                               class="queue-item-link queue-item-artist"
+                               target="_blank"
+                               rel="noopener noreferrer">{{ q['channel'] }}</a>
+                        </article>
                     {% endfor %}
                 {% endif %}
             </div>
         </div>
-    </div>
+    </section>
     <script src="{{ url_for('static', filename='scripts/main.js') }}"></script>
     <script type="module"
             src="{{ url_for('static', filename='scripts/waveform.js') }}"></script>

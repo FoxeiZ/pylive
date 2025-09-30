@@ -1,145 +1,240 @@
+/* ============================================================================
+   Player Controls
+   ============================================================================ */
 .player-control {
   display: flex;
-  min-width: 1024px;
+  min-width: var(--layout-max-width);
   width: 100%;
-  padding: 10px;
+  padding: var(--space-lg);
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--space-lg);
 }
 
-.hidden {
-  /* display: none !important; */
-  height: 0 !important;
-  width: 0 !important;
-  padding: 0 !important;
-  margin: 0 !important;
-  opacity: 0 !important;
-  visibility: hidden !important;
+@media (max-width: 1200px) {
+  .player-control {
+    min-width: auto;
+    flex-wrap: wrap;
+  }
 }
 
-.active {
-  /* display: block; */
-  opacity: 1 !important;
-  visibility: visible !important;
-  transition: visibility 0s, opacity 0.5s linear;
-}
-
+/* ============================================================================
+   Control Button
+   ============================================================================ */
 .ctrl-button {
+  position: relative;
   display: flex;
-  width: 64px;
-  height: 64px;
-  border-radius: 10px;
-  background: var(--div-color);
+  width: var(--space-4xl);
+  height: var(--space-4xl);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface-primary);
   justify-content: center;
   align-items: center;
+  transition: transform var(--transition-fast);
+}
+
+.ctrl-button:hover {
+  transform: scale(1.05);
+}
+
+.ctrl-button:active {
+  transform: scale(0.95);
 }
 
 .click-btn {
-  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  transition: opacity var(--transition-fast);
+}
+
+.click-btn:focus-visible {
+  outline: 2px solid var(--color-text-inverse);
+  outline-offset: 2px;
 }
 
 .click-btn img {
   display: block;
+  pointer-events: none;
 }
 
+/* ============================================================================
+   Metadata Display
+   ============================================================================ */
 .metatag {
   position: relative;
   display: flex;
-  height: 64px;
+  height: var(--space-4xl);
   width: 100%;
-  border-radius: 10px;
-  background: var(--div-color);
-  padding: 0px 12px 0px 12px;
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface-primary);
+  padding: 0 var(--space-md);
   align-items: center;
   justify-content: space-between;
-}
-
-#duration {
-  position: absolute;
-  right: 12px;
+  min-width: 0; /* Allow flex shrinking */
 }
 
 .song-info {
   display: flex;
   flex-direction: column;
+  min-width: 0; /* Allow flex shrinking */
+  flex: 1;
 }
 
-.text {
+.song-link {
   text-decoration: none;
-  color: black;
-  font-size: large;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-lg);
   max-width: 30vw;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: opacity var(--transition-fast);
 }
 
-#artist {
-  font-weight: 500;
+.song-link:hover {
+  opacity: 0.7;
 }
 
+.song-link--artist {
+  font-weight: var(--font-weight-medium);
+}
+
+.duration-display {
+  position: absolute;
+  right: var(--space-md);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-base);
+}
+
+@media (max-width: 768px) {
+  .song-link {
+    max-width: 40vw;
+    font-size: var(--font-size-base);
+  }
+}
+
+/* ============================================================================
+   Queue Section
+   ============================================================================ */
 .queue {
-  min-width: 1024px;
+  min-width: var(--layout-max-width);
   min-height: 240px;
   width: 100%;
-  padding: 32px 10px;
-  gap: 10px;
+  padding: var(--space-2xl) var(--space-lg);
+  gap: var(--space-lg);
   overflow: hidden;
+}
+
+@media (max-width: 1200px) {
+  .queue {
+    min-width: auto;
+  }
 }
 
 .queue-header {
   display: flex;
   justify-content: space-between;
-  padding-bottom: 12px;
   align-items: center;
+  margin-bottom: var(--space-md);
+  flex-wrap: wrap;
+  gap: var(--space-md);
 }
 
-.queue-main-title {
+.queue-title {
   display: flex;
-  gap: 12px;
-  color: #fff;
+  align-items: center;
+  gap: var(--space-md);
+  color: var(--color-text-inverse);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-medium);
 }
 
-#add-btn {
-  color: white;
-  font-size: larger;
-  transition: all 0.2s ease-in-out;
+.queue-controls {
+  display: flex;
+  gap: var(--space-md);
+  flex-wrap: wrap;
 }
 
-.add-btn_Animate {
+.queue-btn {
+  color: var(--color-text-inverse);
+  font-size: var(--font-size-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  transition: background-color var(--transition-fast);
+}
+
+.queue-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.queue-btn:focus-visible {
+  outline: 2px solid var(--color-text-inverse);
+  outline-offset: 2px;
+}
+
+/* ============================================================================
+   Add Track Controls
+   ============================================================================ */
+.add-track-btn {
+  color: var(--color-text-inverse);
+  font-size: var(--font-size-lg);
+  width: var(--space-xl);
+  height: var(--space-xl);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--transition-fast);
+}
+
+.add-track-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.add-track-btn--rotated {
   transform: rotate(45deg);
 }
 
-#add-queue-box {
+.add-track-input {
   height: 0;
+  width: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface-primary);
+  font-size: var(--font-size-base);
+  opacity: 0;
   visibility: hidden;
-  border-radius: 10px;
-  transition: height 0.2s ease-in-out;
+  transition: all var(--transition-fast);
+  overflow: hidden;
 }
 
-.add-queue-box_Animate {
-  height: 25px !important;
-  visibility: visible !important;
+.add-track-input--visible {
+  height: 25px;
+  width: 200px;
+  padding: 0 var(--space-sm);
+  opacity: 1;
+  visibility: visible;
 }
 
-.skip-btn,
-.toggle-visual {
-  margin: auto;
-  color: #fff;
-  font-size: small;
+.add-track-input:focus {
+  outline: 2px solid var(--color-text-inverse);
+  outline-offset: 2px;
 }
 
-.skip-btn {
-  padding-top: 4px;
-}
-
+/* ============================================================================
+   Queue Content
+   ============================================================================ */
 .queue-content {
   width: 100%;
-  height: 100%;
   min-height: 240px;
-  background: var(--div-color);
-  border-radius: 10px;
+  background-color: var(--color-surface-primary);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
 }
 
 .queue-wrapper {
@@ -147,43 +242,173 @@
   flex-direction: column;
   width: 100%;
   height: 100%;
-  padding: 24px;
+  padding: var(--space-xl);
+  gap: var(--space-md);
 }
 
 .queue-empty {
-  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  height: min-content;
+  color: var(--color-text-primary);
+  text-align: center;
 }
 
-#visualizer {
-  cursor: pointer;
-}
-
-#visualizer-setting {
-  display: flex;
-  flex-direction: row;
-  padding: 32px 10px;
-  gap: 10px;
-  justify-content: space-evenly;
-  flex-wrap: wrap;
-}
-
-.setting-box {
+.queue-item {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  transition: background-color var(--transition-fast);
 }
 
-.setting-box label {
-  color: #fff;
+.queue-item:hover {
+  background-color: rgba(0, 0, 0, 0.05);
 }
 
-.setting-box select,
-.setting-box input {
-  border-radius: 10px;
-  height: 25px;
-  text-indent: 5px;
+.queue-item-link {
+  text-decoration: none;
+  color: var(--color-text-primary);
+  transition: opacity var(--transition-fast);
+}
+
+.queue-item-link:hover {
+  opacity: 0.7;
+}
+
+.queue-item-title {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+}
+
+.queue-item-artist {
+  font-size: var(--font-size-sm);
+  opacity: 0.8;
+}
+
+/* ============================================================================
+   Visualizer
+   ============================================================================ */
+.visualizer {
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: opacity var(--transition-fast);
+}
+
+.visualizer:hover {
+  opacity: 0.8;
+}
+
+.visualizer:focus-visible {
+  outline: 2px solid var(--color-text-inverse);
+  outline-offset: 2px;
+}
+
+/* ============================================================================
+   Visualizer Settings
+   ============================================================================ */
+.visualizer-settings {
+  display: flex;
+  flex-direction: row;
+  padding: var(--space-2xl) var(--space-lg);
+  gap: var(--space-lg);
+  justify-content: space-evenly;
+  flex-wrap: wrap;
+  background-color: rgba(0, 0, 0, 0.1);
+  border-radius: var(--radius-lg);
+  margin-top: var(--space-lg);
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: all var(--transition-normal);
+  max-height: 0;
+  overflow: hidden;
+}
+
+.visualizer-settings--visible {
+  opacity: 1;
+  transform: translateY(0);
+  max-height: 500px;
+}
+
+.setting-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 120px;
+}
+
+.setting-label {
+  color: var(--color-text-inverse);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.setting-input,
+.setting-select {
+  border: none;
+  border-radius: var(--radius-lg);
+  height: 32px;
+  padding: 0 var(--space-sm);
+  background-color: var(--color-surface-primary);
+  font-size: var(--font-size-sm);
+  transition: box-shadow var(--transition-fast);
+}
+
+.setting-input:focus,
+.setting-select:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-text-inverse);
+}
+
+/* ============================================================================
+   Responsive Design
+   ============================================================================ */
+@media (max-width: 768px) {
+  .queue-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .queue-controls {
+    align-self: stretch;
+    justify-content: space-between;
+  }
+
+  .visualizer-settings {
+    padding: var(--space-lg);
+    gap: var(--space-md);
+  }
+
+  .setting-group {
+    min-width: 100px;
+  }
+
+  .add-track-input--visible {
+    width: 150px;
+  }
+}
+
+@media (max-width: 480px) {
+  .player-control {
+    flex-direction: column;
+    gap: var(--space-md);
+  }
+
+  .metatag {
+    flex-direction: column;
+    height: auto;
+    padding: var(--space-md);
+    gap: var(--space-sm);
+  }
+
+  .duration-display {
+    position: static;
+  }
+
+  .visualizer-settings {
+    justify-content: center;
+  }
 }
