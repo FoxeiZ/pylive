@@ -268,7 +268,8 @@ class AudioQueueManager:
 
             if not self._auto_queue:
                 self._populate_auto_queue()
-            else:
+
+            if self._auto_queue:
                 next_track = self._auto_queue.pop(0)
                 logger.debug("Retrieved track from auto queue")
                 return next_track

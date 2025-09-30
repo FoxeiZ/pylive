@@ -34,7 +34,7 @@ YTDL_OPTIONS = {
     "cookiesfrombrowser": ("firefox",),
 }
 
-MAX_DURATION_SECONDS = 900.0  # 15 minutes
+MAX_DURATION_SECONDS = 480.0  # 8 minutes
 MAX_PLAYLIST_ENTRIES = 25
 MAX_RELATED_TRACKS = 5
 
