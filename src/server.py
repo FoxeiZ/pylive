@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import logging
 import subprocess
@@ -5,15 +7,17 @@ from array import array
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
 from time import sleep
-from typing import Generator, Union
+from typing import TYPE_CHECKING, Generator, Union
 
 from . import extractor
 from .opusreader import OggStream
 from .utils.general import MISSING_TYPE, execute_in_thread
 
-logger = logging.getLogger(__name__)
-
+if TYPE_CHECKING:
+    from .models.extract import BaseExtractModel, ProcessedExtractModel
 MISSING = MISSING_TYPE()
+
+logger = logging.getLogger(__name__)
 
 
 class EventManager:
@@ -74,7 +78,7 @@ class EventManager:
 
         logger.debug("Event manager thread stopping")
 
-    def add_event(self, event_type: str, data: dict) -> None:
+    def add_event(self, event_type: str, data: BaseExtractModel) -> None:
         if self._shutdown_requested:
             return
 
@@ -131,10 +135,10 @@ class AudioQueueManager:
         self._queue_lock = Lock()  # add queue lock for thread safety
 
         # queues and state
-        self._user_queue: list[Union[str, dict]] = []
-        self._auto_queue: list[Union[str, dict]] = []
+        self._user_queue: list[str | BaseExtractModel] = []
+        self._auto_queue: list[BaseExtractModel] = []
         self._skip_requested: bool = False
-        self._now_playing: dict = {}
+        self._now_playing: ProcessedExtractModel | None = None
 
         # audio components
         self._audio_header_event = Event()
@@ -198,7 +202,7 @@ class AudioQueueManager:
         return self._now_playing.get("duration", 0.0)
 
     @property
-    def now_playing(self) -> dict:
+    def now_playing(self) -> ProcessedExtractModel | None:
         return self._now_playing
 
     @property
@@ -222,8 +226,10 @@ class AudioQueueManager:
         try:
             if not self._auto_queue and self._now_playing:
                 logger.info("Populating auto queue with related tracks")
-                self._auto_queue = extractor.get_youtube_related_tracks(
-                    self._now_playing
+                self._auto_queue = (
+                    extractor.get_youtube_music_related_tracks(self._now_playing)
+                    or extractor.get_youtube_related_tracks(self._now_playing)
+                    or []
                 )
                 logger.info(f"Added {len(self._auto_queue)} tracks to auto queue")
         except Exception as e:
@@ -254,7 +260,7 @@ class AudioQueueManager:
         if not self._stopped:
             execute_in_thread(self._add_to_queue, url, wait_for_result=False)
 
-    def get_next_track(self) -> Union[str, dict, None]:
+    def get_next_track(self) -> Union[str, BaseExtractModel, None]:
         if self._stopped:
             return None
 
@@ -494,7 +500,9 @@ class AudioQueueManager:
 
                 if isinstance(next_track, str):
                     next_track = extractor.extract_video_info(next_track)
-                elif not next_track.get("process", False):
+                # elif not next_track.get("process", False):
+                #     next_track = extractor.extract_video_info(next_track["webpage_url"])
+                else:
                     next_track = extractor.extract_video_info(next_track["webpage_url"])
 
                 if not next_track:
@@ -543,23 +551,23 @@ class AudioQueueManager:
     def event(self) -> Event:
         return self._audio_buffer_event
 
-    def _skip_current_track(self) -> None:
-        if self._stopped:
-            return
+    # def _skip_current_track(self) -> None:
+    #     if self._stopped:
+    #         return
 
-        try:
-            logger.info("Skipping current track")
-            next_track = self.get_next_track()
-            if next_track:
-                with self._queue_lock:
-                    self._user_queue.insert(0, next_track)
-            self._skip_requested = True
-        except Exception as e:
-            logger.error(f"Error skipping track: {e}")
+    #     try:
+    #         logger.info("Skipping current track")
+    #         next_track = self.get_next_track()
+    #         if next_track:
+    #             with self._queue_lock:
+    #                 self._user_queue.insert(0, next_track)
+    #         self._skip_requested = True
+    #     except Exception as e:
+    #         logger.error(f"Error skipping track: {e}")
 
     def skip_track(self) -> None:
         if not self._stopped:
-            execute_in_thread(self._skip_current_track, wait_for_result=False)
+            self._skip_requested = True
 
     def is_alive(self) -> bool:
         return (
