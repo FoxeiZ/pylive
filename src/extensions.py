@@ -1,16 +1,8 @@
 import atexit
-import logging
 
-from .server import AudioQueueManager
+from .server import AudioStreamController
 
-__all__ = ["audio_manager"]
+__all__ = ["audio_controller"]
 
-logger = logging.getLogger(__name__)
-
-try:
-    audio_manager = AudioQueueManager()
-    atexit.register(audio_manager.shutdown)
-    logger.info("Audio manager initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize audio manager: {e}")
-    audio_manager = None
+audio_controller = AudioStreamController()
+atexit.register(audio_controller.shutdown)
