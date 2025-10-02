@@ -8,13 +8,15 @@ from array import array
 from queue import Empty, Full, Queue
 from threading import Event, Lock, Thread
 from time import sleep
-from typing import TYPE_CHECKING, Generator, Union
+from typing import TYPE_CHECKING
 
 from . import extractor
 from .opusreader import OggStream
 from .utils.general import MISSING_TYPE, execute_in_thread
 
 if TYPE_CHECKING:
+    from typing import Generator
+
     from .models.extract import BaseExtractModel, ProcessedExtractModel
 MISSING = MISSING_TYPE()
 
@@ -27,12 +29,18 @@ class EventManager:
     NOW_PLAYING = "nowplaying"
     SHUTDOWN = "shutdown"
 
+    __slots__ = (
+        "_event_queue",
+        "_shutdown_requested",
+        "_user_list",
+        "_event_manager_thread",
+    )
+
     def __init__(self) -> None:
         logger.info("Initializing EventManager")
 
         self._event_queue: Queue = Queue()
         self._shutdown_requested: bool = False
-
         self._user_list: set[Queue] = set()
 
         self._event_manager_thread = Thread(
@@ -176,14 +184,13 @@ class AudioQueueManager:
             logger.error(f"Failed to initialize FFmpeg process: {e}")
             # ensure cleanup if partial initialization occurred
             if self._ffmpeg_process and self._ffmpeg_process != MISSING:
-                try:
+                with contextlib.suppress(Exception):
                     self._ffmpeg_process.terminate()
                     try:
                         self._ffmpeg_process.wait(timeout=5.0)  # pyright: ignore[reportCallIssue]
                     except subprocess.TimeoutExpired:
                         self._ffmpeg_process.kill()
-                except Exception:
-                    pass
+
             self._ffmpeg_process = MISSING
             self._ffmpeg_stdout = None
             self._ffmpeg_stdin = None
@@ -253,11 +260,8 @@ class AudioQueueManager:
 
     def _add_to_history(self, track_id: str) -> None:
         if self._track_history.full():
-            try:
+            with contextlib.suppress(Empty):
                 self._track_history.get_nowait()  # remove oldest
-            except Empty:
-                pass
-
         try:
             self._track_history.put_nowait(track_id)
             logger.debug(f"Added track ID to history: {track_id}")
@@ -302,10 +306,9 @@ class AudioQueueManager:
 
                 # filter out tracks already in history
                 filtered_tracks = self._filter_duplicate_tracks(related_tracks)
-                self._auto_queue = filtered_tracks
-
+                self._auto_queue.extend(filtered_tracks)
                 logger.info(
-                    f"Added {len(self._auto_queue)} unique tracks to auto queue (filtered {len(related_tracks) - len(self._auto_queue)} duplicates)"
+                    f"Added {len(filtered_tracks)} unique tracks to auto queue (filtered {len(related_tracks) - len(filtered_tracks)} duplicates)"
                 )
         except Exception as e:
             logger.error(f"Failed to populate auto queue: {e}")
@@ -335,7 +338,7 @@ class AudioQueueManager:
         if not self._stopped:
             execute_in_thread(self._add_to_queue, url, wait_for_result=False)
 
-    def get_next_track(self) -> Union[str, BaseExtractModel, None]:
+    def get_next_track(self) -> str | BaseExtractModel | None:
         if self._stopped:
             return None
 
@@ -554,9 +557,9 @@ class AudioQueueManager:
         logger.debug("FFmpeg stdin writer thread stopping")
 
     def _handle_queue(self) -> None:
-        logger.debug("Starting queue handler")
+        logger.debug("starting queue handler")
 
-        track_queue = Queue()
+        track_queue: Queue[ProcessedExtractModel] = Queue()
         stdin_writer_thread = Thread(
             target=self._write_to_ffmpeg,
             args=(track_queue, self._next_track_signal),
@@ -564,6 +567,9 @@ class AudioQueueManager:
             daemon=True,
         )
         stdin_writer_thread.start()
+
+        error_count = 0
+        max_error = 5
 
         while not self._stopped:
             try:
@@ -577,31 +583,36 @@ class AudioQueueManager:
                     continue
 
                 if isinstance(next_track, str):
-                    next_track = extractor.extract_video_info(next_track)
-                # elif not next_track.get("process", False):
-                #     next_track = extractor.extract_video_info(next_track["webpage_url"])
+                    processed_track = extractor.extract_video_info(next_track)
                 else:
-                    next_track = extractor.extract_video_info(next_track["webpage_url"])
+                    processed_track = extractor.extract_video_info(
+                        next_track["webpage_url"]
+                    )
 
-                if not next_track:
+                if not processed_track:
                     logger.warning("Failed to process track, skipping")
                     continue
 
                 if self._stopped:
                     break
 
-                self._now_playing = next_track
+                self._now_playing = processed_track
                 track_queue.put(self._now_playing)
 
                 logger.info(
-                    f"Queued track for playback: {next_track.get('title', 'Unknown')}"
+                    f"Queued track for playback: {processed_track.get('title', 'Unknown')}"
                 )
-
                 self._next_track_signal.wait()
+                error_count = 0
 
             except Exception as e:
+                error_count += 1
                 logger.error(f"Error in queue handler: {e}")
-                sleep(0.1)  # prevent busy loop
+                if error_count >= max_error:
+                    logger.error("Too many consecutive errors, stopping queue handler")
+                    break
+
+                sleep(min(0.1 * error_count, 2.0))
 
         logger.debug("Queue handler thread stopping")
 
