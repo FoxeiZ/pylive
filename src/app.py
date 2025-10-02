@@ -1,21 +1,30 @@
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 from flask import Flask
 
 from .routes import register_all_routes
 from .utils.handlers import create_error_response
 
+if TYPE_CHECKING:
+    from werkzeug.exceptions import HTTPException
+
 logger = logging.getLogger(__name__)
 
 
-def not_found_error(error):
+def not_found_error(_: HTTPException):
     """Handle 404 errors."""
     return create_error_response(message="Resource not found", status_code=404)
 
 
-def internal_server_error(error):
+def internal_server_error(error: HTTPException):
     """Handle 500 errors."""
-    return create_error_response(message="Internal server error", status_code=500)
+    return create_error_response(
+        message=error.description or "Internal Server Error",
+        status_code=error.code or 500,
+    )
 
 
 def create_app() -> Flask:
