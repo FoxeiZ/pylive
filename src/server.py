@@ -4,7 +4,6 @@ import contextlib
 import json
 import logging
 import subprocess
-from array import array
 from queue import Empty, Full, Queue
 from threading import Event, Lock, Thread
 from time import sleep
@@ -18,6 +17,7 @@ if TYPE_CHECKING:
     from typing import Generator
 
     from .models.extract import BaseExtractModel, ProcessedExtractModel
+    from .opusreader import OggPage
 MISSING = MISSING_TYPE()
 
 logger = logging.getLogger(__name__)
@@ -87,7 +87,7 @@ class EventManager:
                 logger.debug(f"Processed event: {event_type}")
 
             except Exception as e:
-                logger.error(f"Error processing event: {e}")
+                logger.error(f"Error processing event: {e}", exc_info=True)
                 sleep(0.1)  # prevent busy loop on repeated errors
 
         logger.debug("Event manager thread stopping")
@@ -100,7 +100,7 @@ class EventManager:
             self._event_queue.put((event_type, data), timeout=1.0)
             logger.debug(f"Added event to queue: {event_type}")
         except Exception as e:
-            logger.error(f"Failed to add event to queue: {e}")
+            logger.error(f"Failed to add event to queue: {e}", exc_info=True)
 
     def shutdown(self) -> None:
         logger.info("Shutting down EventManager")
@@ -311,7 +311,7 @@ class AudioQueueManager:
                     f"Added {len(filtered_tracks)} unique tracks to auto queue (filtered {len(related_tracks) - len(filtered_tracks)} duplicates)"
                 )
         except Exception as e:
-            logger.error(f"Failed to populate auto queue: {e}")
+            logger.error(f"Failed to populate auto queue: {e}", exc_info=True)
 
     def _add_to_queue(self, url: str) -> None:
         if self._stopped:
@@ -332,7 +332,7 @@ class AudioQueueManager:
                 logger.warning(f"Failed to extract track information from URL: {url}")
 
         except Exception as e:
-            logger.error(f"Error adding track to queue: {e}")
+            logger.error(f"Error adding track to queue: {e}", exc_info=True)
 
     def add_track(self, url: str) -> None:
         if not self._stopped:
@@ -362,7 +362,7 @@ class AudioQueueManager:
             return None
 
         except Exception as e:
-            logger.error(f"Error getting next track: {e}")
+            logger.error(f"Error getting next track: {e}", exc_info=True)
             return None
 
     @staticmethod
@@ -399,53 +399,68 @@ class AudioQueueManager:
             raise
 
     def _read_ogg_stream(self) -> None:
-        logger.debug("Starting Ogg stream reader")
+        logger.debug("starting ogg stream reader")
 
         if not self._ffmpeg_stdout:
-            logger.error("FFmpeg stdout is not available")
+            logger.error("ffmpeg stdout is not available, cannot read ogg stream")
             return
 
         try:
-            pages_iterator = OggStream(self._ffmpeg_stdout).iter_pages()
+            pages_iterator: Generator[OggPage, None, None] = OggStream(
+                self._ffmpeg_stdout
+            ).iter_pages()
 
-            first_page = next(pages_iterator)
-            if first_page.flag == 2:
-                self._header_data += (
+            try:
+                first_page = next(pages_iterator)
+                if first_page.flag != 2:
+                    logger.warning("first ogg page is not a 'Beginning of Stream' page")
+                second_page = next(pages_iterator)
+
+                header1 = (
                     b"OggS" + first_page.header + first_page.segtable + first_page.data
                 )
+                header2 = (
+                    b"OggS"
+                    + second_page.header
+                    + second_page.segtable
+                    + second_page.data
+                )
+                self._header_data = header1 + header2
+                self._audio_header_event.set()
+                logger.debug("ogg stream headers processed")
 
-            second_page = next(pages_iterator)
-            self._header_data += (
-                b"OggS" + second_page.header + second_page.segtable + second_page.data
-            )
-            self._audio_header_event.set()
+            except StopIteration:
+                logger.error(
+                    "ogg stream ended before headers could be read. stream is likely empty or corrupt"
+                )
+                return
 
-            logger.debug("Ogg stream headers processed")
             for page in pages_iterator:
                 if self._stopped:
                     break
 
                 try:
-                    partial_data = array("b")
-                    partial_data.frombytes(b"OggS" + page.header + page.segtable)
-
-                    for packet_data, _ in page.iter_packets():
-                        partial_data.frombytes(packet_data)
-                    self._buffer_data = partial_data.tobytes()
+                    page_header = b"OggS" + page.header + page.segtable
+                    page_payload = b"".join(
+                        packet_data for packet_data, _ in page.iter_packets()
+                    )
+                    self._buffer_data = page_header + page_payload
 
                     self._audio_buffer_event.set()
                     self._audio_buffer_event.clear()
 
                 except Exception as e:
-                    logger.warning(f"Error processing audio page: {e}")
+                    logger.warning(
+                        f"error processing ogg audio page: {e}", exc_info=True
+                    )
 
         except StopIteration:
-            logger.info("Ogg stream ended")
+            logger.info("ogg stream ended")
         except Exception as e:
             if not self._stopped:
-                logger.error(f"Error in Ogg stream reader: {e}")
+                logger.error(f"error in ogg stream reader: {e}", exc_info=True)
 
-        logger.debug("Ogg stream reader thread stopping")
+        logger.debug("ogg stream reader thread stopping")
 
     def _cleanup_track_process(self, process: subprocess.Popen) -> None:
         try:
@@ -461,7 +476,7 @@ class AudioQueueManager:
                 self._track_processes.remove(process)
 
         except Exception as e:
-            logger.error(f"Error cleaning up track process: {e}")
+            logger.error(f"Error cleaning up track process: {e}", exc_info=True)
 
     def _write_to_ffmpeg(
         self, queue: Queue[ProcessedExtractModel], signal: Event
@@ -550,7 +565,7 @@ class AudioQueueManager:
                 signal.set()
 
             except Exception as e:
-                logger.error(f"Error in FFmpeg stdin writer: {e}")
+                logger.error(f"Error in FFmpeg stdin writer: {e}", exc_info=True)
                 self._skip_requested = False
                 signal.set()
 
@@ -607,7 +622,7 @@ class AudioQueueManager:
 
             except Exception as e:
                 error_count += 1
-                logger.error(f"Error in queue handler: {e}")
+                logger.error(f"Error in queue handler: {e}", exc_info=True)
                 if error_count >= max_error:
                     logger.error("Too many consecutive errors, stopping queue handler")
                     break
@@ -692,7 +707,7 @@ class AudioQueueManager:
                         self._ffmpeg_process.kill()
                     logger.info("FFmpeg process terminated successfully")
             except Exception as e:
-                logger.error(f"Error terminating FFmpeg process: {e}")
+                logger.error(f"Error terminating FFmpeg process: {e}", exc_info=True)
 
             # signal all events to unblock waiting threads
             self._audio_buffer_event.set()
