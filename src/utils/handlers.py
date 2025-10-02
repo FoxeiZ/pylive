@@ -6,37 +6,27 @@ from typing import TYPE_CHECKING
 from flask import Response, abort, json, request
 
 if TYPE_CHECKING:
-    from typing import Iterable
+    from typing import Any, Iterable
 
 
 logger = logging.getLogger(__name__)
 
 
-def is_value_present(arg) -> bool:
-    if arg is None:
-        return False
-
-    if isinstance(arg, (list, dict, str)):
-        return len(arg) > 0
-
-    return bool(arg)
-
-
 def create_response(
-    data=None,
+    data: Any = None,
     message: str = "success",
     is_error: bool = False,
     status_code: int = 200,
-    additional_data=None,
+    extra: Any = None,
 ) -> Response:
     response_body = {
         "msg": message,
         "error": is_error,
-        "data": data if is_value_present(data) else None,
+        "data": data if data else None,
     }
 
-    if additional_data:
-        response_body.update({"additional_data": additional_data})
+    if extra:
+        response_body.update({"extra": extra})
 
     return Response(
         response=json.dumps(response_body),
@@ -50,7 +40,7 @@ def create_error_response(*args, **kwargs):
 
 
 def get_args(
-    data: dict,
+    data: dict[str, str],
     check_args: Iterable[str | tuple[str, type]],
     raise_on_missing: bool = False,
 ) -> dict:
@@ -62,7 +52,10 @@ def get_args(
             arg_name, arg_type = arg, str
 
         if arg_name in data:
-            extracted_args[arg_name] = arg_type(data.get(arg_name))
+            if arg_type is bool:
+                extracted_args[arg_name] = data.get(arg_name) in ("1", "true", "True")
+            else:
+                extracted_args[arg_name] = arg_type(data.get(arg_name))
         else:
             if raise_on_missing:
                 raise KeyError(f"{arg_name} is required")
@@ -77,7 +70,14 @@ def validate_request_args(
     def decorator(func):
         def wrapper(*args, **kwargs):
             try:
-                if request.method != "GET":
+                if request.method == "GET":
+                    data = request.args
+                elif request.method == "POST":
+                    if request.is_json:
+                        data = request.get_json()
+                    else:
+                        data = request.form
+                else:
                     logger.warning(f"Unsupported request method: {request.method}")
                     return abort(
                         create_error_response(
@@ -85,7 +85,6 @@ def validate_request_args(
                         )
                     )
 
-                data = request.args
                 if data is None:
                     logger.warning("No data provided in request")
                     return abort(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from flask import Blueprint, Flask, request
+from flask import Blueprint, Flask
 
 from ..extensions import audio_controller
 from ..utils.handlers import (
@@ -36,16 +36,16 @@ def on_error_decorator(message: str):
 
 @bp.route("/")
 @on_error_decorator("Failed to get queue information")
-def get_queue_info():
+@validate_request_args(
+    required_args=[],
+    optional_args=[("index", int), ("page", int), ("use_autoplay", bool)],
+)
+def get_queue_info(page=0, use_autoplay=False):
     queue = audio_controller.queue
     auto_queue = audio_controller.auto_queue
 
-    page_index = int(request.args.get("index", request.args.get("page", 0)))
-    use_autoplay = request.args.get("use_autoplay", "0") == "1"
-
-    # Calculate pagination
     items_per_page = 5
-    end_offset = min((page_index + 1) * items_per_page, len(queue))
+    end_offset = min((page + 1) * items_per_page, len(queue))
     start_offset = max(end_offset - items_per_page, 0)
 
     response_data = {
@@ -61,12 +61,12 @@ def get_queue_info():
 @bp.route("/auto", methods=["GET"])
 @on_error_decorator("Failed to get auto queue information")
 def get_auto_queue():
-    return create_response(data={"auto_queue": audio_controller.auto_queue})
+    return create_response(data=audio_controller.auto_queue)
 
 
 @bp.route("/add", methods=["POST"])
 @on_error_decorator("Failed to add track to queue")
-@validate_request_args(["url"])
+@validate_request_args(required_args=[("url", str)])
 def add_track_to_queue(url):
     logger.info(f"Adding track to queue: {url}")
     audio_controller.add_track(url)
