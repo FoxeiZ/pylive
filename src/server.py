@@ -127,7 +127,7 @@ class AudioQueueManager:
         "_user_queue",
         "_auto_queue",
         "_track_history",
-        "_skip_requested",
+        "_skip_event",
         "_audio_buffer_event",
         "_audio_header_event",
         "_now_playing",
@@ -148,13 +148,13 @@ class AudioQueueManager:
 
         self._stopped: bool = False
         self._shutdown_lock = Lock()
-        self._queue_lock = Lock()  # add queue lock for thread safety
+        self._queue_lock = Lock()
 
         # queues and state
         self._user_queue: list[str | BaseExtractModel] = []
         self._auto_queue: list[BaseExtractModel] = []
         self._track_history: Queue[str] = Queue(maxsize=50)
-        self._skip_requested: bool = False
+        self._skip_event: Event = Event()
         self._now_playing: ProcessedExtractModel | None = None
 
         # audio components
@@ -183,11 +183,11 @@ class AudioQueueManager:
         except Exception as e:
             logger.error(f"Failed to initialize FFmpeg process: {e}")
             # ensure cleanup if partial initialization occurred
-            if self._ffmpeg_process and self._ffmpeg_process != MISSING:
+            if isinstance(self._ffmpeg_process, subprocess.Popen):
                 with contextlib.suppress(Exception):
                     self._ffmpeg_process.terminate()
                     try:
-                        self._ffmpeg_process.wait(timeout=5.0)  # pyright: ignore[reportCallIssue]
+                        self._ffmpeg_process.wait(timeout=5.0)
                     except subprocess.TimeoutExpired:
                         self._ffmpeg_process.kill()
 
@@ -236,27 +236,8 @@ class AudioQueueManager:
         return self._event_manager
 
     def _get_history_ids(self) -> set[str]:
-        history_ids = set()
-        temp_queue = Queue()
-
-        # extract all items from history queue
-        while not self._track_history.empty():
-            try:
-                track_id = self._track_history.get_nowait()
-                history_ids.add(track_id)
-                temp_queue.put(track_id)
-            except Empty:
-                break
-
-        # put items back into history queue
-        while not temp_queue.empty():
-            try:
-                track_id = temp_queue.get_nowait()
-                self._track_history.put(track_id)
-            except Empty:
-                break
-
-        return history_ids
+        with self._track_history.mutex:
+            return set(self._track_history.queue)
 
     def _add_to_history(self, track_id: str) -> None:
         if self._track_history.full():
@@ -467,7 +448,7 @@ class AudioQueueManager:
             if process.poll() is None:
                 process.terminate()
                 try:
-                    process.wait(timeout=3.0)  # pyright: ignore[reportCallIssue]
+                    process.wait(timeout=3.0)
                 except subprocess.TimeoutExpired:
                     logger.warning("Track process did not terminate, killing")
                     process.kill()
@@ -477,6 +458,54 @@ class AudioQueueManager:
 
         except Exception as e:
             logger.error(f"Error cleaning up track process: {e}", exc_info=True)
+
+    @staticmethod
+    def _build_track_ffmpeg_command(track: ProcessedExtractModel) -> list[str]:
+        base_command = [
+            "ffmpeg",
+            "-reconnect",
+            "1",
+            "-reconnect_streamed",
+            "1",
+            "-reconnect_delay_max",
+            "5",
+            "-i",
+            track["url"],
+            "-threads",
+            "2",
+        ]
+
+        # if audio needs re-encoding, apply proper codec and settings.
+        # otherwise, copy the stream directly for better performance.
+        if track.get("need_reencode"):
+            audio_options = [
+                "-c:a",
+                "libopus",  # re-encode to opus
+                "-b:a",
+                "128k",  # audio bitrate
+                "-ar",
+                "48000",  # sample rate
+            ]
+        else:
+            audio_options = [
+                "-c:a",
+                "copy",  # stream copy
+            ]
+
+        final_command = [
+            *base_command,
+            *audio_options,
+            "-f",
+            "opus",  # output format
+            "-vn",  # no video
+            "-bufsize",
+            "64k",  # limit buffer size
+            "-loglevel",
+            "error",
+            "pipe:1",
+        ]
+
+        return final_command
 
     def _write_to_ffmpeg(
         self, queue: Queue[ProcessedExtractModel], signal: Event
@@ -501,41 +530,13 @@ class AudioQueueManager:
                 if track_id:
                     self._add_to_history(track_id)
 
-                ffmpeg_cmd = [
-                    "ffmpeg",
-                    "-reconnect",
-                    "1",
-                    "-reconnect_streamed",
-                    "1",
-                    "-reconnect_delay_max",
-                    "5",
-                    "-i",
-                    track["url"],
-                    "-threads",
-                    "2",
-                    "-b:a",
-                    "128k",  # audio bitrate
-                    "-ar",
-                    "48000",  # sample rate
-                    "-c:a",
-                    "copy",
-                    "-f",
-                    "opus",  # output format
-                    "-vn",  # no video
-                    "-bufsize",
-                    "64k",  # limit buffer size
-                    "-loglevel",
-                    "error",
-                    "pipe:1",
-                ]
-
+                ffmpeg_cmd = self._build_track_ffmpeg_command(track)
                 track_process = subprocess.Popen(
                     ffmpeg_cmd,
                     stdout=subprocess.PIPE,
                     stdin=None,
                     stderr=subprocess.PIPE,
                 )
-
                 self._track_processes.append(track_process)
 
                 while not self._stopped:
@@ -547,7 +548,7 @@ class AudioQueueManager:
                         break
 
                     audio_data = track_process.stdout.read(4096)
-                    if not audio_data or self._skip_requested or self._stopped:
+                    if not audio_data or self._skip_event.is_set() or self._stopped:
                         break
 
                     if self._ffmpeg_stdin and not self._stopped:
@@ -561,12 +562,12 @@ class AudioQueueManager:
 
                 self._cleanup_track_process(track_process)
                 logger.info(f"Finished playback: {track.get('title', 'Unknown')}")
-                self._skip_requested = False
+                self._skip_event.clear()
                 signal.set()
 
             except Exception as e:
                 logger.error(f"Error in FFmpeg stdin writer: {e}", exc_info=True)
-                self._skip_requested = False
+                self._skip_event.clear()
                 signal.set()
 
         logger.debug("FFmpeg stdin writer thread stopping")
@@ -655,23 +656,9 @@ class AudioQueueManager:
     def event(self) -> Event:
         return self._audio_buffer_event
 
-    # def _skip_current_track(self) -> None:
-    #     if self._stopped:
-    #         return
-
-    #     try:
-    #         logger.info("Skipping current track")
-    #         next_track = self.get_next_track()
-    #         if next_track:
-    #             with self._queue_lock:
-    #                 self._user_queue.insert(0, next_track)
-    #         self._skip_requested = True
-    #     except Exception as e:
-    #         logger.error(f"Error skipping track: {e}")
-
     def skip_track(self) -> None:
         if not self._stopped:
-            self._skip_requested = True
+            self._skip_event.set()
 
     def is_alive(self) -> bool:
         return (
@@ -686,22 +673,23 @@ class AudioQueueManager:
 
             logger.info("Shutting down AudioQueueManager")
             self._stopped = True
-
+            self._skip_event.set()
             self._event_manager.shutdown()
 
             for process in self._track_processes[:]:
                 self._cleanup_track_process(process)
 
             try:
-                if self._ffmpeg_process and self._ffmpeg_process != MISSING:
+                if isinstance(self._ffmpeg_process, subprocess.Popen):
                     if self._ffmpeg_stdin:
-                        self._ffmpeg_stdin.close()
+                        with contextlib.suppress(OSError):
+                            self._ffmpeg_stdin.close()
                     if self._ffmpeg_stdout:
                         self._ffmpeg_stdout.close()
 
                     self._ffmpeg_process.terminate()
                     try:
-                        self._ffmpeg_process.wait(timeout=5.0)  # pyright: ignore[reportCallIssue]
+                        self._ffmpeg_process.wait(timeout=5.0)
                     except subprocess.TimeoutExpired:
                         logger.warning("Main FFmpeg process did not terminate, killing")
                         self._ffmpeg_process.kill()
