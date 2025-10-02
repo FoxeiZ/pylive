@@ -111,6 +111,7 @@ class AudioQueueManager:
         "_queue_lock",
         "_user_queue",
         "_auto_queue",
+        "_track_history",
         "_skip_requested",
         "_audio_buffer_event",
         "_audio_header_event",
@@ -137,6 +138,7 @@ class AudioQueueManager:
         # queues and state
         self._user_queue: list[str | BaseExtractModel] = []
         self._auto_queue: list[BaseExtractModel] = []
+        self._track_history: Queue[str] = Queue(maxsize=50)
         self._skip_requested: bool = False
         self._now_playing: ProcessedExtractModel | None = None
 
@@ -219,6 +221,65 @@ class AudioQueueManager:
     def event_queue(self) -> EventManager:
         return self._event_manager
 
+    def _get_history_ids(self) -> set[str]:
+        history_ids = set()
+        temp_queue = Queue()
+
+        # extract all items from history queue
+        while not self._track_history.empty():
+            try:
+                track_id = self._track_history.get_nowait()
+                history_ids.add(track_id)
+                temp_queue.put(track_id)
+            except Empty:
+                break
+
+        # put items back into history queue
+        while not temp_queue.empty():
+            try:
+                track_id = temp_queue.get_nowait()
+                self._track_history.put(track_id)
+            except Empty:
+                break
+
+        return history_ids
+
+    def _add_to_history(self, track_id: str) -> None:
+        if self._track_history.full():
+            try:
+                self._track_history.get_nowait()  # remove oldest
+            except Empty:
+                pass
+
+        try:
+            self._track_history.put_nowait(track_id)
+            logger.debug(f"Added track ID to history: {track_id}")
+        except Exception as e:
+            logger.warning(f"Failed to add track to history: {e}")
+
+    def _filter_duplicate_tracks(
+        self, tracks: list[BaseExtractModel]
+    ) -> list[BaseExtractModel]:
+        if not tracks:
+            return []
+
+        history_ids = self._get_history_ids()
+        filtered_tracks = []
+
+        for track in tracks:
+            track_id = track.get("id")
+            if track_id and track_id not in history_ids:
+                filtered_tracks.append(track)
+            else:
+                logger.debug(
+                    f"Skipping duplicate track: {track.get('title', 'Unknown')} (ID: {track_id})"
+                )
+
+        logger.debug(
+            f"Filtered {len(tracks) - len(filtered_tracks)} duplicate tracks from auto queue"
+        )
+        return filtered_tracks
+
     def _populate_auto_queue(self) -> None:
         if self._stopped:
             return
@@ -226,12 +287,19 @@ class AudioQueueManager:
         try:
             if not self._auto_queue and self._now_playing:
                 logger.info("Populating auto queue with related tracks")
-                self._auto_queue = (
+                related_tracks = (
                     extractor.get_youtube_music_related_tracks(self._now_playing)
                     or extractor.get_youtube_related_tracks(self._now_playing)
                     or []
                 )
-                logger.info(f"Added {len(self._auto_queue)} tracks to auto queue")
+
+                # filter out tracks already in history
+                filtered_tracks = self._filter_duplicate_tracks(related_tracks)
+                self._auto_queue = filtered_tracks[:10]
+
+                logger.info(
+                    f"Added {len(self._auto_queue)} unique tracks to auto queue (filtered {len(related_tracks) - len(self._auto_queue)} duplicates)"
+                )
         except Exception as e:
             logger.error(f"Failed to populate auto queue: {e}")
 
@@ -385,7 +453,9 @@ class AudioQueueManager:
         except Exception as e:
             logger.error(f"Error cleaning up track process: {e}")
 
-    def _write_to_ffmpeg(self, queue: Queue, signal: Event) -> None:
+    def _write_to_ffmpeg(
+        self, queue: Queue[ProcessedExtractModel], signal: Event
+    ) -> None:
         logger.debug("Starting FFmpeg stdin writer")
 
         while not self._stopped:
@@ -402,6 +472,11 @@ class AudioQueueManager:
                     f"Starting playback: {current_track.get('title', 'Unknown')}"
                 )
                 self._event_manager.add_event(EventManager.NOW_PLAYING, current_track)
+
+                # add current track to history
+                track_id = current_track.get("id")
+                if track_id:
+                    self._add_to_history(track_id)
 
                 ffmpeg_cmd = [
                     "ffmpeg",
@@ -462,15 +537,14 @@ class AudioQueueManager:
                     sleep(0.001)
 
                 self._cleanup_track_process(track_process)
-                signal.set()
-                self._skip_requested = False
-
                 logger.info(
                     f"Finished playback: {current_track.get('title', 'Unknown')}"
                 )
 
             except Exception as e:
                 logger.error(f"Error in FFmpeg stdin writer: {e}")
+            finally:
+                self._skip_requested = False
                 signal.set()
 
         logger.debug("FFmpeg stdin writer thread stopping")

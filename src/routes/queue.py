@@ -32,7 +32,7 @@ def get_queue_info():
 
         # Parse request parameters
         page_index = int(request.args.get("index", request.args.get("page", 0)))
-        use_autoqueue = request.args.get("use_autoqueue", "0") == "1"
+        use_autoplay = request.args.get("use_autoplay", "0") == "1"
 
         # Calculate pagination
         items_per_page = 5
@@ -43,7 +43,7 @@ def get_queue_info():
             "queue": queue[start_offset:end_offset],
         }
 
-        if use_autoqueue and auto_queue:
+        if use_autoplay and auto_queue:
             response_data.update({"auto_queue": auto_queue})
 
         return create_response(data=response_data)

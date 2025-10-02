@@ -51,7 +51,7 @@ YTDL_OPTIONS = {
 
 MAX_DURATION_SECONDS = 481.0  # 8 minutes
 MAX_PLAYLIST_ENTRIES = 25
-MAX_RELATED_TRACKS = 10
+MAX_RELATED_TRACKS = 25
 
 
 def is_video_too_long(video_info: BaseExtractModel) -> bool:
