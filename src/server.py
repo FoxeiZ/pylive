@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import subprocess
@@ -346,7 +347,7 @@ class AudioQueueManager:
                     logger.debug("Retrieved track from user queue")
                     return next_track
 
-            if not self._auto_queue:
+            if not self._auto_queue and self._now_playing:
                 self._populate_auto_queue()
 
             if self._auto_queue:
@@ -467,20 +468,18 @@ class AudioQueueManager:
         while not self._stopped:
             try:
                 try:
-                    current_track = queue.get(timeout=1.0)
+                    track = queue.get(timeout=1.0)
                 except Empty:
                     continue
 
                 if self._stopped:
                     break
 
-                logger.info(
-                    f"Starting playback: {current_track.get('title', 'Unknown')}"
-                )
-                self._event_manager.add_event(EventManager.NOW_PLAYING, current_track)
+                logger.info(f"Starting playback: {track.get('title', 'Unknown')}")
+                self._event_manager.add_event(EventManager.NOW_PLAYING, track)
 
                 # add current track to history
-                track_id = current_track.get("id")
+                track_id = track.get("id")
                 if track_id:
                     self._add_to_history(track_id)
 
@@ -493,7 +492,7 @@ class AudioQueueManager:
                     "-reconnect_delay_max",
                     "5",
                     "-i",
-                    current_track["url"],
+                    track["url"],
                     "-threads",
                     "2",
                     "-b:a",
@@ -543,13 +542,12 @@ class AudioQueueManager:
                     sleep(0.001)
 
                 self._cleanup_track_process(track_process)
-                logger.info(
-                    f"Finished playback: {current_track.get('title', 'Unknown')}"
-                )
+                logger.info(f"Finished playback: {track.get('title', 'Unknown')}")
+                self._skip_requested = False
+                signal.set()
 
             except Exception as e:
                 logger.error(f"Error in FFmpeg stdin writer: {e}")
-            finally:
                 self._skip_requested = False
                 signal.set()
 
