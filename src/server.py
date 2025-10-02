@@ -4,7 +4,7 @@ import json
 import logging
 import subprocess
 from array import array
-from queue import Empty, Queue
+from queue import Empty, Full, Queue
 from threading import Event, Lock, Thread
 from time import sleep
 from typing import TYPE_CHECKING, Generator, Union
@@ -24,14 +24,15 @@ class EventManager:
     NEXT_TRACK = "next"
     QUEUE_ADD = "queueadd"
     NOW_PLAYING = "nowplaying"
+    SHUTDOWN = "shutdown"
 
     def __init__(self) -> None:
         logger.info("Initializing EventManager")
 
         self._event_queue: Queue = Queue()
-        self._event_data: str = ""
-        self._event_signal: Event = Event()
         self._shutdown_requested: bool = False
+
+        self._user_list: set[Queue] = set()
 
         self._event_manager_thread = Thread(
             target=self._manage_events, name="event_manager", daemon=True
@@ -43,17 +44,21 @@ class EventManager:
     def watch(self) -> Generator[str, None, None]:
         logger.debug("Client connected to event stream")
 
-        if "nowplaying" in self._event_data:
-            logger.debug("Sending current now playing event to new client")
-            yield self._event_data
-
+        event_queue: Queue[str] = Queue()
+        self._user_list.add(event_queue)
         try:
             while not self._shutdown_requested:
-                if self._event_signal.wait(timeout=1.0):
-                    yield self._event_data
-                    self._event_signal.clear()
+                with contextlib.suppress(Empty):
+                    event = event_queue.get(timeout=1.0)
+                    if event == EventManager.SHUTDOWN:
+                        break
+                    yield event
+
         except GeneratorExit:
             logger.debug("Client disconnected from event stream")
+
+        finally:
+            self._user_list.discard(event_queue)
 
     def _manage_events(self) -> None:
         logger.debug("Event manager thread started")
@@ -65,10 +70,10 @@ class EventManager:
                 except Empty:
                     continue
 
-                self._event_data = (
-                    f"event: {event_type}\ndata: {json.dumps(event_data)}\n\n"
-                )
-                self._event_signal.set()
+                event_data = f"event: {event_type}\ndata: {json.dumps(event_data)}\n\n"
+                for user_queue in list(self._user_list):
+                    with contextlib.suppress(Full):
+                        user_queue.put_nowait(event_data)
 
                 logger.debug(f"Processed event: {event_type}")
 
@@ -91,7 +96,8 @@ class EventManager:
     def shutdown(self) -> None:
         logger.info("Shutting down EventManager")
         self._shutdown_requested = True
-        self._event_signal.set()
+        self._event_queue.put((EventManager.SHUTDOWN, None))
+        self._user_list.clear()
 
 
 class AudioQueueManager:
@@ -295,7 +301,7 @@ class AudioQueueManager:
 
                 # filter out tracks already in history
                 filtered_tracks = self._filter_duplicate_tracks(related_tracks)
-                self._auto_queue = filtered_tracks[:10]
+                self._auto_queue = filtered_tracks
 
                 logger.info(
                     f"Added {len(self._auto_queue)} unique tracks to auto queue (filtered {len(related_tracks) - len(self._auto_queue)} duplicates)"
