@@ -4,10 +4,14 @@ import logging
 
 from flask import Blueprint, Flask, Response, render_template
 
-from ..extensions import audio_manager
-from ..server import AudioQueueManager
+from ..extensions import audio_controller
+from ..server import AudioStreamController
 from ..utils.general import MISSING_TYPE
-from ..utils.handlers import create_error_response, create_response
+from ..utils.handlers import (
+    create_error_response,
+    create_response,
+    validate_request_args,
+)
 
 logger = logging.getLogger(__name__)
 MISSING = MISSING_TYPE()
@@ -18,7 +22,7 @@ __all__ = ("register_routes",)
 bp = Blueprint("root", __name__)
 
 
-def generate_audio_stream(audio_manager: AudioQueueManager):
+def generate_audio_stream(audio_manager: AudioStreamController):
     logger.debug("Starting audio stream generation")
 
     try:
@@ -39,12 +43,12 @@ def generate_audio_stream(audio_manager: AudioQueueManager):
 @bp.route("/")
 def index():
     try:
-        if not audio_manager:
+        if not audio_controller:
             # Render with empty data if audio manager is not available
             return render_template("stream.html", np={}, queue=[])
 
         return render_template(
-            "stream.html", np=audio_manager.now_playing, queue=audio_manager.queue
+            "stream.html", np=audio_controller.now_playing, queue=audio_controller.queue
         )
 
     except Exception as e:
@@ -55,7 +59,7 @@ def index():
 @bp.route("/watch_event")
 def watch_events():
     try:
-        if not audio_manager:
+        if not audio_controller:
             logger.error("Audio manager not available for events")
             return create_error_response(
                 message="Event streaming not available", status_code=503
@@ -63,7 +67,7 @@ def watch_events():
 
         logger.debug("Client connected to event stream")
         return Response(
-            audio_manager.event_queue.watch(), content_type="text/event-stream"
+            audio_controller.event_queue.watch(), content_type="text/event-stream"
         )
 
     except Exception as e:
@@ -76,15 +80,15 @@ def watch_events():
 @bp.route("/stream")
 def get_stream():
     try:
-        if not audio_manager:
+        if not audio_controller:
             logger.error("Audio manager not available for streaming")
             return create_error_response(
                 message="Audio streaming not available", status_code=503
             )
 
         if (
-            not hasattr(audio_manager, "_ffmpeg_process")
-            or audio_manager._ffmpeg_process == MISSING
+            not hasattr(audio_controller, "_ffmpeg_process")
+            or audio_controller._ffmpeg_process == MISSING
         ):
             logger.error("FFmpeg process not available")
             return create_error_response(
@@ -93,7 +97,9 @@ def get_stream():
 
         logger.debug("Starting audio stream")
         return Response(
-            generate_audio_stream(audio_manager), content_type="audio/ogg", status=200
+            generate_audio_stream(audio_controller),
+            content_type="audio/ogg",
+            status=200,
         )
 
     except Exception as e:
@@ -107,15 +113,15 @@ def get_stream():
 @bp.route("/nowplaying")
 def get_now_playing():
     try:
-        if not audio_manager:
+        if not audio_controller:
             return create_error_response(
                 message="Audio manager not available", status_code=503
             )
 
-        response_data = {"now_playing": audio_manager.now_playing}
+        response_data = {"now_playing": audio_controller.now_playing}
 
-        if audio_manager.queue:
-            response_data.update({"next_up": audio_manager.queue[0]})
+        if audio_controller.queue:
+            response_data.update({"next_up": audio_controller.queue[0]})
 
         return create_response(data=response_data)
 
@@ -128,3 +134,15 @@ def get_now_playing():
 
 def register_routes(app: Flask):
     app.register_blueprint(bp, url_prefix="/")
+
+
+@bp.route("/test")
+@validate_request_args(required_args=[("param1", int)], optional_args=[("param2", str)])
+def test_endpoint(param1, param2=None):
+    try:
+        logger.debug(f"Test endpoint called with param1={param1}, param2={param2}")
+        data = {"param1": param1, "param2": param2}
+        return create_response(data=data, message="Test endpoint successful")
+    except Exception as e:
+        logger.error(f"Error in test endpoint: {e}")
+        return create_error_response(message="Test endpoint failed")

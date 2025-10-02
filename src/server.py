@@ -109,7 +109,7 @@ class EventManager:
         self._user_list.clear()
 
 
-class AudioQueueManager:
+class AudioStreamController:
     """
     Manages audio queue, streaming, and playback for the PyLive application.
 
