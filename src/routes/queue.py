@@ -27,8 +27,8 @@ def get_queue_info():
                 message="Audio manager not available", status_code=503
             )
 
-        queue = audio_manager.queue.copy()
-        auto_queue = audio_manager.auto_queue.copy() if audio_manager.auto_queue else []
+        queue = audio_manager.queue
+        auto_queue = audio_manager.auto_queue if audio_manager.auto_queue else []
 
         # Parse request parameters
         page_index = int(request.args.get("index", request.args.get("page", 0)))
