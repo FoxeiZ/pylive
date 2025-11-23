@@ -228,6 +228,10 @@ playButton.addEventListener("click", function () {
   playButton.classList.add("hidden");
   pauseButton.classList.remove("hidden");
 
+  if (window.initVisualizer) {
+    window.initVisualizer();
+  }
+
   audioPlayer.src = "/stream";
   audioPlayer.play().catch((error) => {
     console.error("Error starting audio playback:", error);
