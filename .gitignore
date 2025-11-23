@@ -5,7 +5,7 @@ output
 *test*
 sample*
 dump*
-*.log
+*log
 *.backup
 
 # skip hidden file

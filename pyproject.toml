@@ -6,7 +6,9 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "flask>=3.1.2",
-    "yt-dlp>=2025.9.23",
+    "pydantic>=2.12.4",
+    "yt-dlp>=2025.11.12",
+    "yt-dlp-ejs>=0.3.1",
 ]
 
 [dependency-groups]
