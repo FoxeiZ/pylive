@@ -3,17 +3,30 @@ from __future__ import annotations
 import json
 import logging
 import re
-from queue import Queue
+from concurrent.futures import ThreadPoolExecutor
 from random import randint
-from threading import Thread
 from typing import TYPE_CHECKING, TypeVar, overload
 from urllib import request as urllib_request
 
 if TYPE_CHECKING:
     from http.client import HTTPResponse
-    from typing import IO, Callable, Iterable, Literal, Union
+    from typing import IO, Any, Callable, Iterable, Literal, Union
+
+    from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="pylive_worker")
+
+
+def serialize_data(data: Any | BaseModel) -> Any:
+    if hasattr(data, "model_dump"):
+        return data.model_dump()
+    if isinstance(data, list):
+        return [serialize_data(item) for item in data]
+    if isinstance(data, dict):
+        return {key: serialize_data(value) for key, value in data.items()}
+    return data
 
 
 class NonRaisingHTTPErrorProcessor(urllib_request.HTTPErrorProcessor):
@@ -47,31 +60,17 @@ def execute_in_thread(
 def execute_in_thread(
     callable_func: Callable[..., T], *args, wait_for_result: bool = True, **kwargs
 ) -> Union[None, T]:
-    def thread_wrapper(result_queue: Queue):
-        try:
-            result = callable_func(*args, **kwargs)
-            result_queue.put(result)
-            logger.debug(f"Thread execution completed: {callable_func.__name__}")
-        except Exception as e:
-            logger.error(f"Error in thread execution: {e}")
-            result_queue.put(None)
-
-    result_queue = Queue()
-    thread = Thread(
-        target=thread_wrapper,
-        args=(result_queue,),
-        name=f"thread-{callable_func.__name__}-{id(result_queue):#x}",
-        daemon=True,
-    )
-
-    logger.debug(f"Starting thread: {thread.name}")
-    thread.start()
+    logger.debug(f"Submitting task to thread pool: {callable_func.__name__}")
+    future = _executor.submit(callable_func, *args, **kwargs)
 
     if not wait_for_result:
         return None
 
-    thread.join()
-    return result_queue.get_nowait()
+    try:
+        return future.result()
+    except Exception as e:
+        logger.error(f"Error in thread execution: {e}")
+        return None
 
 
 T = TypeVar("T")
