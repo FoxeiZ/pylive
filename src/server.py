@@ -136,7 +136,9 @@ class AudioStreamController:
         "_next_track_signal",
         "_ffmpeg_process",
         "_ffmpeg_stdout",
+        "_ffmpeg_stderr",
         "_ffmpeg_stdin",
+        "_ffmpeg_stderr_thread",
         "_audio_reader_thread",
         "_queue_handler_thread",
         "_event_manager",
@@ -173,12 +175,22 @@ class AudioStreamController:
         # process
         self._ffmpeg_process = MISSING
         self._ffmpeg_stdout = None
+        self._ffmpeg_stderr = None
         self._ffmpeg_stdin = None
+        self._ffmpeg_stderr_thread = None
 
         try:
             self._ffmpeg_process = self._create_main_ffmpeg_process()
             self._ffmpeg_stdout = self._ffmpeg_process.stdout
+            self._ffmpeg_stderr = self._ffmpeg_process.stderr
             self._ffmpeg_stdin = self._ffmpeg_process.stdin
+            if self._ffmpeg_stderr:
+                self._ffmpeg_stderr_thread = Thread(
+                    target=self._consume_ffmpeg_stderr,
+                    name="ffmpeg_stderr_consumer",
+                    daemon=True,
+                )
+                self._ffmpeg_stderr_thread.start()
             logger.info("FFmpeg main process initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize FFmpeg process: {e}")
@@ -193,7 +205,9 @@ class AudioStreamController:
 
             self._ffmpeg_process = MISSING
             self._ffmpeg_stdout = None
+            self._ffmpeg_stderr = None
             self._ffmpeg_stdin = None
+            self._ffmpeg_stderr_thread = None
 
         self._audio_reader_thread = Thread(
             target=self._read_ogg_stream, name="ogg_stream_reader", daemon=True
@@ -378,6 +392,29 @@ class AudioStreamController:
         except Exception as e:
             logger.error(f"Failed to create FFmpeg process: {e}")
             raise
+
+    def _consume_ffmpeg_stderr(self) -> None:
+        logger.debug("starting ffmpeg stderr consumer")
+
+        if not self._ffmpeg_stderr:
+            logger.debug("ffmpeg stderr pipe is not available")
+            return
+
+        try:
+            while not self._stopped:
+                line = self._ffmpeg_stderr.readline()
+                if not line:
+                    break
+
+                message = line.decode("utf-8", errors="replace").strip()
+                if message:
+                    logger.error(f"ffmpeg stderr: {message}")
+
+        except Exception as e:
+            if not self._stopped:
+                logger.warning(f"error reading ffmpeg stderr: {e}", exc_info=True)
+
+        logger.debug("ffmpeg stderr consumer stopping")
 
     def _read_ogg_stream(self) -> None:
         logger.debug("starting ogg stream reader")
@@ -648,7 +685,7 @@ class AudioStreamController:
 
     @property
     def buffer(self) -> bytes:
-        if not self._buffer_data and self.is_alive() or self._stopped:
+        if (not self._buffer_data and self.is_alive()) or self._stopped:
             raise InterruptedError("Buffer not available")
         return self._buffer_data
 
@@ -686,6 +723,8 @@ class AudioStreamController:
                             self._ffmpeg_stdin.close()
                     if self._ffmpeg_stdout:
                         self._ffmpeg_stdout.close()
+                    if self._ffmpeg_stderr:
+                        self._ffmpeg_stderr.close()
 
                     self._ffmpeg_process.terminate()
                     try:
@@ -696,6 +735,9 @@ class AudioStreamController:
                     logger.info("FFmpeg process terminated successfully")
             except Exception as e:
                 logger.error(f"Error terminating FFmpeg process: {e}", exc_info=True)
+
+            if self._ffmpeg_stderr_thread and self._ffmpeg_stderr_thread.is_alive():
+                self._ffmpeg_stderr_thread.join(timeout=1.0)
 
             # signal all events to unblock waiting threads
             self._audio_buffer_event.set()

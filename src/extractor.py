@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import json
 import logging
+from copy import deepcopy
+from threading import Lock
 from typing import TYPE_CHECKING, Callable, Generator, Iterable, Literal, cast, overload
 
+from cachetools import TTLCache
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
@@ -34,6 +37,10 @@ logger = logging.getLogger(__name__)
 MAX_DURATION_SECONDS = 8 * 60  # 8 minutes
 MAX_PLAYLIST_ENTRIES = 25
 MAX_RELATED_TRACKS = 25
+VIDEO_INFO_CACHE_TTL = 30 * 60  # 30 minutes
+VIDEO_INFO_CACHE_MAXSIZE = 500
+RELATED_TRACKS_CACHE_TTL = 15 * 60  # 15 minutes
+RELATED_TRACKS_CACHE_MAXSIZE = 200
 
 YTDL_OPTIONS = {
     "nocheckcertificate": True,
@@ -52,6 +59,60 @@ YTDL_OPTIONS = {
     "playlistrandom": True,
     "cookiesfrombrowser": ("firefox",),
 }
+
+_video_info_cache: TTLCache[str, ProcessedExtractModel | ExtractModel] = TTLCache(
+    maxsize=VIDEO_INFO_CACHE_MAXSIZE, ttl=VIDEO_INFO_CACHE_TTL
+)
+_video_info_cache_lock = Lock()
+
+_related_tracks_cache: TTLCache[str, list[BaseExtractModel]] = TTLCache(
+    maxsize=RELATED_TRACKS_CACHE_MAXSIZE, ttl=RELATED_TRACKS_CACHE_TTL
+)
+_related_tracks_cache_lock = Lock()
+
+
+def _build_video_cache_key(url: str, process: bool) -> str:
+    return f"{'processed' if process else 'raw'}::{url}"
+
+
+def _get_cached_video_info(
+    cache_key: str,
+) -> ProcessedExtractModel | ExtractModel | None:
+    with _video_info_cache_lock:
+        cached_value = _video_info_cache.get(cache_key)
+
+    if cached_value is None:
+        return None
+
+    logger.debug(f"Video info cache hit for key: {cache_key}")
+    return cast(ProcessedExtractModel | ExtractModel, deepcopy(cached_value))
+
+
+def _set_cached_video_info(
+    cache_key: str, value: ProcessedExtractModel | ExtractModel
+) -> None:
+    with _video_info_cache_lock:
+        _video_info_cache[cache_key] = deepcopy(value)
+
+
+def _build_related_cache_key(source: str, track_id: str) -> str:
+    return f"{source}::{track_id}"
+
+
+def _get_cached_related_tracks(cache_key: str) -> list[BaseExtractModel] | None:
+    with _related_tracks_cache_lock:
+        cached_value = _related_tracks_cache.get(cache_key)
+
+    if cached_value is None:
+        return None
+
+    logger.debug(f"Related tracks cache hit for key: {cache_key}")
+    return cast(list[BaseExtractModel], deepcopy(cached_value))
+
+
+def _set_cached_related_tracks(cache_key: str, tracks: list[BaseExtractModel]) -> None:
+    with _related_tracks_cache_lock:
+        _related_tracks_cache[cache_key] = deepcopy(tracks)
 
 
 def is_video_too_long(video_info: BaseExtractModel) -> bool:
@@ -73,6 +134,11 @@ def extract_video_info(
     url: str, process: bool = True
 ) -> ProcessedExtractModel | ExtractModel:
     logger.info(f"Extracting video information from URL: {url}")
+
+    cache_key = _build_video_cache_key(url, process)
+    cached_info = _get_cached_video_info(cache_key)
+    if cached_info is not None:
+        return cached_info
 
     with YoutubeDL(YTDL_OPTIONS) as ytdl:
         try:
@@ -131,8 +197,10 @@ def extract_video_info(
                     "url": get_and_cast(data, "url", ""),
                     "format_duration": get_and_cast(data, "duration_string", "0:00"),
                 }
+                _set_cached_video_info(cache_key, processed_info)
                 return processed_info
 
+            _set_cached_video_info(cache_key, extract_info)
             return extract_info
 
         except DownloadError as e:
@@ -254,6 +322,11 @@ def get_youtube_related_tracks(
         logger.warning("No video ID available for YouTube API")
         return []
 
+    cache_key = _build_related_cache_key("youtube", current_track_id)
+    cached_tracks = _get_cached_related_tracks(cache_key)
+    if cached_tracks is not None:
+        return cached_tracks
+
     try:
         api_payload = {
             "context": {
@@ -354,6 +427,7 @@ def get_youtube_related_tracks(
             secondary_results, _parser, current_track_id
         )
         logger.debug(f"Found {len(related_tracks)} related tracks from YouTube")
+        _set_cached_related_tracks(cache_key, related_tracks)
         return related_tracks
 
     except Exception as e:
@@ -369,6 +443,11 @@ def get_youtube_music_related_tracks(
     if not video_id:
         logger.warning("No video ID available for YouTube Music API")
         return []
+
+    cache_key = _build_related_cache_key("ytmusic", video_id)
+    cached_tracks = _get_cached_related_tracks(cache_key)
+    if cached_tracks is not None:
+        return cached_tracks
 
     pl_id = f"RDAMVM{video_id}"
     with YoutubeDL(YTDL_OPTIONS) as ytdl:
@@ -402,6 +481,7 @@ def get_youtube_music_related_tracks(
             logger.debug(
                 f"Successfully extracted {len(related_tracks)} related tracks from YouTube Music"
             )
+            _set_cached_related_tracks(cache_key, related_tracks)
             return related_tracks
 
         except Exception as e:

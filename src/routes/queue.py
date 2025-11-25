@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlparse
 
 from flask import Blueprint, Flask
 
@@ -17,6 +18,27 @@ __all__ = ("register_routes",)
 
 
 bp = Blueprint("queue", __name__)
+
+_YOUTUBE_ALLOWED_HOSTS = (
+    "youtube.com",
+    "youtu.be",
+)
+
+
+def _is_valid_youtube_url(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+
+    if parsed.scheme not in {"http", "https"}:
+        return False
+
+    hostname = parsed.hostname or ""
+    return any(
+        hostname == domain or hostname.endswith(f".{domain}")
+        for domain in _YOUTUBE_ALLOWED_HOSTS
+    )
 
 
 def on_error_decorator(message: str):
@@ -69,6 +91,12 @@ def get_auto_queue():
 @validate_request_args(required_args=[("url", str)])
 def add_track_to_queue(url):
     logger.info(f"Adding track to queue: {url}")
+    if not _is_valid_youtube_url(url):
+        logger.warning(f"Rejected non-YouTube URL: {url}")
+        return create_error_response(
+            message="Invalid YouTube URL provided",
+            status_code=400,
+        )
     audio_controller.add_track(url)
     return create_response(message="Track added to queue successfully")
 

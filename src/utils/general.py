@@ -10,23 +10,11 @@ from urllib import request as urllib_request
 
 if TYPE_CHECKING:
     from http.client import HTTPResponse
-    from typing import IO, Any, Callable, Iterable, Literal, Union
-
-    from pydantic import BaseModel
+    from typing import IO, Callable, Iterable, Literal, Union
 
 logger = logging.getLogger(__name__)
 
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="pylive_worker")
-
-
-def serialize_data(data: Any | BaseModel) -> Any:
-    if hasattr(data, "model_dump"):
-        return data.model_dump()
-    if isinstance(data, list):
-        return [serialize_data(item) for item in data]
-    if isinstance(data, dict):
-        return {key: serialize_data(value) for key, value in data.items()}
-    return data
 
 
 class NonRaisingHTTPErrorProcessor(urllib_request.HTTPErrorProcessor):

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import secrets
 from typing import TYPE_CHECKING
 
 from flask import Flask
@@ -12,6 +14,17 @@ if TYPE_CHECKING:
     from werkzeug.exceptions import HTTPException
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_secret_key() -> str:
+    env_key = os.environ.get("PYLIVE_SECRET_KEY") or os.environ.get("SECRET_KEY")
+    if env_key:
+        logger.info("using secret key from environment")
+        return env_key
+
+    generated_key = secrets.token_hex(32)
+    logger.warning("environment secret key missing; generated ephemeral key")
+    return generated_key
 
 
 def not_found_error(_: HTTPException):
@@ -29,7 +42,7 @@ def internal_server_error(error: HTTPException):
 
 def create_app() -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
-    app.secret_key = "huhu"
+    app.secret_key = _resolve_secret_key()
     app.config.update(
         TEMPLATES_AUTO_RELOAD=True,
         SESSION_COOKIE_SAMESITE="None",

@@ -24,8 +24,11 @@ DEALINGS IN THE SOFTWARE.
 
 from __future__ import annotations
 
+import logging
 import struct
 from typing import IO, TYPE_CHECKING, ClassVar, Generator, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 __all__ = (
     "OggError",
@@ -94,7 +97,7 @@ class OggPage:
                 partial = False
 
         if partial:
-            print("yield part of data")
+            logger.debug("yielding partial ogg packet data")
             yield self.data[offset:], False
 
 
