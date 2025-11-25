@@ -5,8 +5,8 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "cachetools>=5.3.0",
     "flask>=3.1.2",
-    "pydantic>=2.12.4",
     "yt-dlp>=2025.11.12",
     "yt-dlp-ejs>=0.3.1",
 ]
