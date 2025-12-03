@@ -3,68 +3,22 @@ from __future__ import annotations
 import json
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor
 from random import randint
-from typing import TYPE_CHECKING, TypeVar, overload
+from typing import TYPE_CHECKING, Mapping
 from urllib import request as urllib_request
 
 if TYPE_CHECKING:
     from http.client import HTTPResponse
-    from typing import IO, Callable, Iterable, Literal, Union
+    from typing import IO, Iterable, Union
 
 logger = logging.getLogger(__name__)
-
-_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="pylive_worker")
 
 
 class NonRaisingHTTPErrorProcessor(urllib_request.HTTPErrorProcessor):
     http_response = https_response = lambda self, request, response: response
 
 
-class MissingValueType:
-    def __getattribute__(self, _):
-        return self.__class__
-
-    def __repr__(self) -> str:
-        return "MISSING"
-
-    def __bool__(self) -> bool:
-        return False
-
-
-MISSING_TYPE = MissingValueType
-
-T = TypeVar("T")
-
-
-@overload
-def execute_in_thread(
-    callable_func: Callable[..., T], *args, wait_for_result: Literal[True], **kwargs
-) -> T: ...
-@overload
-def execute_in_thread(
-    callable_func: Callable[..., T], *args, wait_for_result: Literal[False], **kwargs
-) -> None: ...
-def execute_in_thread(
-    callable_func: Callable[..., T], *args, wait_for_result: bool = True, **kwargs
-) -> Union[None, T]:
-    logger.debug(f"Submitting task to thread pool: {callable_func.__name__}")
-    future = _executor.submit(callable_func, *args, **kwargs)
-
-    if not wait_for_result:
-        return None
-
-    try:
-        return future.result()
-    except Exception as e:
-        logger.error(f"Error in thread execution: {e}")
-        return None
-
-
-T = TypeVar("T")
-
-
-def get_and_cast(d: dict, key: str | Iterable[str | int], default: T = None) -> T:
+def get_and_cast[T](d: Mapping, key: str | Iterable[str | int], default: T = None) -> T:
     if isinstance(key, str):
         key = [key]
 

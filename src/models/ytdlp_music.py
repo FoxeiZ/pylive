@@ -1,4 +1,4 @@
-from typing import List, NotRequired, TypedDict
+from typing import Iterator, List, NotRequired, TypedDict
 
 
 class ThumbnailDict(TypedDict):
@@ -13,21 +13,21 @@ class PlaylistEntryDict(TypedDict):
     id: str
     url: str
     title: str
-    description: NotRequired[str]
+    description: str | None
     duration: float
     channel_id: str
     channel: str
     channel_url: str
     uploader: str
-    uploader_id: NotRequired[str]
-    uploader_url: NotRequired[str]
+    uploader_id: str | None
+    uploader_url: str | None
     thumbnails: List[ThumbnailDict]
-    timestamp: NotRequired[int]
-    release_timestamp: NotRequired[int]
-    availability: NotRequired[str]
-    view_count: NotRequired[int]
-    live_status: NotRequired[str]
-    channel_is_verified: NotRequired[bool]
+    timestamp: int | None
+    release_timestamp: int | None
+    availability: str | None
+    view_count: int | None
+    live_status: str | None
+    channel_is_verified: bool | None
     __x_forwarded_for_ip: NotRequired[str]
 
 
@@ -35,7 +35,7 @@ class YouTubeMusicPlaylistDict(TypedDict):
     id: str
     title: str
     _type: str
-    entries: List[PlaylistEntryDict]
+    entries: Iterator[PlaylistEntryDict]
     webpage_url: str
     original_url: str
     webpage_url_basename: str
@@ -43,6 +43,6 @@ class YouTubeMusicPlaylistDict(TypedDict):
     extractor: str
     extractor_key: str
     release_year: NotRequired[int]
-    requested_entries: List[int]
+    requested_entries: NotRequired[list[int]]
     playlist_count: NotRequired[int]
-    epoch: int
+    epoch: NotRequired[int]
