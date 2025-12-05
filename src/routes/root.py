@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from quart import Blueprint, Quart, render_template
+from quart import Blueprint, Quart, make_response, render_template, request
 
 from ..extensions import asc
 from ..utils.handlers import (
@@ -45,7 +45,15 @@ async def watch_events():
             )
 
         logger.debug("Client connected to event stream")
-        return asc.event_queue.watch(), 200, {"Content-Type": "text/event-stream"}
+        response = await make_response(
+            asc.event_queue.watch(),
+            {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+            },
+        )
+        response.timeout = None  # type: ignore
+        return response
 
     except Exception as e:
         logger.error(f"error in event stream: {e}")
@@ -63,8 +71,17 @@ async def get_stream():
                 message="audio streaming not available", status_code=503
             )
 
-        logger.debug("starting audio stream")
-        return asc.stream(), 200, {"Content-Type": "audio/ogg"}
+        logger.debug("starting audio stream for client %s", request.remote_addr)
+        response = await make_response(
+            asc.stream(),
+            {
+                "Transfer-Encoding": "chunked",
+                "Content-Type": "audio/ogg",
+                "Cache-Control": "no-cache",
+            },
+        )
+        response.timeout = None  # type: ignore
+        return response
 
     except Exception as e:
         logger.error(f"error getting audio stream: {e}")

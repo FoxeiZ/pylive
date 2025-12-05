@@ -60,7 +60,7 @@ class BoundedHistory[T]:
         self._data.clear()
 
 
-class AsyncOggPage:
+class OggPage:
     __slots__ = (
         "crc",
         "data",
@@ -205,7 +205,7 @@ class OggStreamProcessor:
             table.append(crc)
         return tuple(table)
 
-    async def read_page(self, stdout: asyncio.StreamReader) -> AsyncOggPage | None:
+    async def read_page(self, stdout: asyncio.StreamReader) -> OggPage | None:
         try:
             head = await stdout.readexactly(4)
             if head != b"OggS":
@@ -227,7 +227,7 @@ class OggStreamProcessor:
             bodylen = sum(segtable)
             body_data = await stdout.readexactly(bodylen)
 
-            return AsyncOggPage(
+            return OggPage(
                 header=header_data,
                 flag=flag,
                 gran_pos=gran_pos,
@@ -252,7 +252,7 @@ class OggStreamProcessor:
 
     async def iter_pages(
         self, stdout: asyncio.StreamReader, stop_check: asyncio.Event | None = None
-    ) -> AsyncGenerator[AsyncOggPage, None]:
+    ) -> AsyncGenerator[OggPage, None]:
         try:
             while True:
                 if stop_check and stop_check.is_set():
@@ -452,38 +452,33 @@ class AudioStreamController:
         return self._cached_header
 
     async def _spawn_main_ffmpeg_process(self) -> asyncio.subprocess.Process:
+        # fmt: off
         return await self._spawn_ffmpeg_process(
             [
                 "ffmpeg",
+                "-re",
                 "-hide_banner",
-                "-f",
-                "s16le",
-                "-ar",
-                "48000",
-                "-ac",
-                "2",
-                "-re",  # real-time
-                "-i",
-                "pipe:0",  # stdin
-                "-threads",
-                "4",
-                "-c:a",
-                "libopus",
-                "-b:a",
-                "128k",
-                "-ar",
-                "48000",
-                "-f",
-                "ogg",
+                "-f", "s16le",
+                "-ar", "48000",
+                "-ac", "2",
+                "-i", "pipe:0",
+                "-threads", "4",
+                "-c:a", "libopus",
+                "-b:a", "128k",
+                "-ar", "48000",
+                "-frame_duration", "20",
+                "-application", "audio",
+                "-f", "ogg",
+                "-flush_packets", "1",
+                "-vbr", "off",
                 "-vn",
-                "-bufsize",
-                "64k",
-                "-loglevel",
-                "error",
-                "pipe:1",  # stdout
+                # "-bufsize", "64k",
+                "-loglevel", "error",
+                "pipe:1",
             ],
             reason="main audio stream",
         )
+        # fmt: on
 
     async def _stop_main_ffmpeg_process(self) -> None:
         """stop the main ffmpeg process if it exists."""
@@ -495,34 +490,29 @@ class AudioStreamController:
     async def _spawn_feed_ffmpeg_process(
         self, track: ProcessedExtractModel
     ) -> asyncio.subprocess.Process:
+        # fmt: off
         return await self._spawn_ffmpeg_process(
             [
                 "ffmpeg",
-                "-reconnect",
-                "1",
-                "-reconnect_streamed",
-                "1",
-                "-reconnect_delay_max",
-                "5",
+                "-reconnect", "1",
+                "-reconnect_streamed", "1",
+                "-reconnect_delay_max", "5",
                 "-i",
                 track["url"],
-                "-threads",
-                "2",
-                "-f",
-                "s16le",  # output format is raw PCM
-                "-acodec",
-                "pcm_s16le",  # output codec is PCM 16-bit little endian
-                "-ar",
-                "48000",  # sample rate
-                "-ac",
-                "2",  # stereo
-                "-loglevel",
-                "error",
+                "-threads", "2",
+                "-af", "aresample=async=1",  # handle timestamp discontinuities
+                "-f", "s16le",
+                "-acodec", "pcm_s16le",
+                "-ar", "48000",
+                "-ac", "2",
+                "-flush_packets", "1",
+                "-loglevel", "error",
                 "pipe:1",
             ],
             reason="feed track process",
             stdin=None,
         )
+        # fmt: on
 
     async def _stop_feed_ffmpeg_process(self) -> None:
         """stop the feed ffmpeg process if it exists."""
@@ -532,28 +522,24 @@ class AudioStreamController:
             self._feed_process = None
 
     async def _spawn_silence_ffmpeg_process(self) -> asyncio.subprocess.Process:
+        # fmt: off
         return await self._spawn_ffmpeg_process(
             [
                 "ffmpeg",
-                "-f",
-                "lavfi",
-                "-i",
-                "anullsrc=r=48000:cl=stereo",
-                "-f",
-                "s16le",
-                "-acodec",
-                "pcm_s16le",
-                "-ar",
-                "48000",
-                "-ac",
-                "2",
-                "-loglevel",
-                "error",
+                "-f", "lavfi",
+                "-i", "anullsrc=r=48000:cl=stereo",
+                "-f", "s16le",
+                "-acodec", "pcm_s16le",
+                "-ar", "48000",
+                "-ac", "2",
+                "-flush_packets", "1",
+                "-loglevel", "error",
                 "pipe:1",
             ],
             reason="silence generation",
             stdin=None,
         )
+        # fmt: on
 
     async def _stop_silence_ffmpeg_process(self) -> None:
         """stop the silence ffmpeg process if it exists."""
