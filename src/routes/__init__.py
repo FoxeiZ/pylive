@@ -1,7 +1,9 @@
+from quart import Quart
+
 from .queue import register_routes as queue_bp
 from .root import register_routes as root_bp
 
 
-def register_all_routes(app):
+def register_all_routes(app: Quart):
     queue_bp(app)
     root_bp(app)

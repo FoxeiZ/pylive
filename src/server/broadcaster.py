@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 import asyncio
+import enum
 import json
 import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from typing import AsyncGenerator
+    from collections.abc import AsyncGenerator, Mapping
+    from typing import Any
 
     from ..models.extract import BaseExtractModel
 
 logger = logging.getLogger(__name__)
+
+
+class EventType(enum.StrEnum):
+    NEXT_TRACK = "next"
+    QUEUE_ADD = "queueadd"
+    NOW_PLAYING = "nowplaying"
+    SHUTDOWN = "shutdown"
 
 
 class EventManager:
@@ -23,16 +32,11 @@ class EventManager:
     - Graceful shutdown with client notification
     """
 
-    NEXT_TRACK = "next"
-    QUEUE_ADD = "queueadd"
-    NOW_PLAYING = "nowplaying"
-    SHUTDOWN = "shutdown"
-
     __slots__ = (
+        "_max_connections",
         "_shutdown_requested",
         "_user_queues",
         "_user_queues_lock",
-        "_max_connections",
     )
 
     def __init__(self, max_connections: int = 1000) -> None:
@@ -53,13 +57,13 @@ class EventManager:
     def connection_count(self) -> int:
         return len(self._user_queues)
 
-    async def watch(self) -> AsyncGenerator[str, None]:
-        """
-        Async generator that yields SSE events for a connected client.
+    def _craft_event(
+        self, event_type: EventType, data: Mapping[str, Any] | None = None
+    ) -> str:
+        data_str = json.dumps(data) if data is not None else "null"
+        return f"event: {event_type}\ndata: {data_str}\n\n"
 
-        Yields:
-            SSE-formatted event strings.
-        """
+    async def watch(self) -> AsyncGenerator[str, None]:
         logger.debug("client connected to event stream")
 
         async with self._user_queues_lock:
@@ -75,10 +79,10 @@ class EventManager:
             while not self._shutdown_requested:
                 try:
                     event = await asyncio.wait_for(event_queue.get(), timeout=1.0)
-                    if event == EventManager.SHUTDOWN:
+                    if event == EventType.SHUTDOWN:
                         break
                     yield event
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
 
         except asyncio.CancelledError:
@@ -101,20 +105,12 @@ class EventManager:
             except Exception as e:
                 logger.warning(f"failed to queue event for client: {e}")
 
-    async def add_event(self, event_type: str, data: BaseExtractModel) -> None:
-        """
-        Add and broadcast an event to all connected clients.
-
-        Args:
-            event_type: The type of event (e.g., QUEUE_ADD, NOW_PLAYING).
-            data: The event data to broadcast.
-        """
+    async def add_event(self, event_type: EventType, data: BaseExtractModel) -> None:
         if self._shutdown_requested:
             return
 
         try:
-            event_data = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
-            await self._broadcast_event(event_data)
+            await self._broadcast_event(self._craft_event(event_type, data))
             logger.debug(f"broadcast event: {event_type}")
         except Exception as e:
             logger.error(f"failed to add event: {e}", exc_info=True)
@@ -124,8 +120,6 @@ class EventManager:
         logger.info("shutting down EventManager")
         self._shutdown_requested = True
 
-        shutdown_data = f"event: {EventManager.SHUTDOWN}\ndata: null\n\n"
-        await self._broadcast_event(shutdown_data)
-
+        await self._broadcast_event(self._craft_event(EventType.SHUTDOWN))
         async with self._user_queues_lock:
             self._user_queues.clear()

@@ -1,6 +1,10 @@
 {
-    "python.analysis.typeCheckingMode": "standard",
+    "python.analysis.typeCheckingMode": "off",
+    "python.analysis.ignore": [
+        "**"
+    ],
     "ruff.organizeImports": true,
+    "ruff.lint.enable": true,
     "editor.codeActionsOnSave": {
         "source.fixAll.ruff": "always",
         "source.organizeImports.ruff": "always"

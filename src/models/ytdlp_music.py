@@ -1,4 +1,5 @@
-from typing import Iterator, List, NotRequired, TypedDict
+from collections.abc import Iterator
+from typing import NotRequired, TypedDict
 
 
 class ThumbnailDict(TypedDict):
@@ -21,7 +22,7 @@ class PlaylistEntryDict(TypedDict):
     uploader: str
     uploader_id: str | None
     uploader_url: str | None
-    thumbnails: List[ThumbnailDict]
+    thumbnails: list[ThumbnailDict]
     timestamp: int | None
     release_timestamp: int | None
     availability: str | None

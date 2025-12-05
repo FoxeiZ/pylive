@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import json
 import logging
 import re
-from random import randint
-from typing import TYPE_CHECKING, Mapping
+from typing import TYPE_CHECKING
 from urllib import request as urllib_request
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
     from http.client import HTTPResponse
-    from typing import IO, Iterable, Union
+    from typing import IO, Any
+
 
 logger = logging.getLogger(__name__)
 
@@ -18,30 +18,32 @@ class NonRaisingHTTPErrorProcessor(urllib_request.HTTPErrorProcessor):
     http_response = https_response = lambda self, request, response: response
 
 
-def get_and_cast[T](d: Mapping, key: str | Iterable[str | int], default: T = None) -> T:
+def get_and_cast[T](
+    d: Mapping[str, Any], key: str | Iterable[str | int], default: T = None
+) -> T:
     if isinstance(key, str):
         key = [key]
 
     value = d
     for k in key:
-        if isinstance(value, dict) and k in value:
-            value = value[k]
-        elif isinstance(value, list) and isinstance(k, int) and 0 <= k < len(value):
-            value = value[k]
+        if (isinstance(value, dict) and k in value) or (
+            isinstance(value, list) and isinstance(k, int) and 0 <= k < len(value)
+        ):
+            value = value[k]  # type: ignore
         else:
             return default
 
     if default is None:
-        return value  # pyright: ignore[reportReturnType]
+        return value  # type: ignore
 
     _type = type(default)
     try:
-        return _type(value)  # pyright: ignore[reportCallIssue]
+        return _type(value)  # type: ignore
     except (ValueError, TypeError):
         return default
 
 
-def human_readable_to_int(human_readable: str) -> int:
+def human_readable_to_int(human_readable: str | Any) -> int:
     if not human_readable or not isinstance(human_readable, str):
         return 0
 
@@ -72,105 +74,10 @@ def human_readable_to_int(human_readable: str) -> int:
     return int(number)
 
 
-class HTTPRequestManager:
-    DEFAULT_HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Connection": "keep-alive",
-    }
-
-    @staticmethod
-    def make_request(
-        url: str,
-        method: str = "GET",
-        data=None,
-        headers=None,
-        enable_compression: bool = False,
-        use_proxy: bool = True,
-        *args,
-        **kwargs,
-    ) -> HTTPResponse:
-        logger.debug(f"Making {method} request to: {url}")
-
-        request_headers = HTTPRequestManager.DEFAULT_HEADERS.copy()
-        if headers:
-            request_headers.update(headers)
-
-        if enable_compression:
-            request_headers["Accept-Encoding"] = "gzip, deflate, br"
-        else:
-            request_headers["Accept-Encoding"] = "identity"
-
-        request_data = None
-        if data:
-            if isinstance(data, dict):
-                request_data = bytes(json.dumps(data), encoding="utf-8")
-                if "Content-Type" not in request_headers:
-                    request_headers["Content-Type"] = "application/json"
-            else:
-                request_data = data
-
-        try:
-            request_obj = urllib_request.Request(
-                url=url,
-                data=request_data,
-                headers=request_headers,
-                method=method,
-            )
-
-            opener = urllib_request.build_opener(NonRaisingHTTPErrorProcessor())
-            response = opener.open(request_obj, *args, **kwargs)
-
-            if response.getcode() >= 400:
-                logger.warning(f"HTTP error {response.getcode()} for {url}")
-                if use_proxy:
-                    logger.info("Attempting proxy request")
-                    return HTTPRequestManager._make_proxy_request(url, *args, **kwargs)
-
-            logger.debug(f"Request successful: {response.getcode()}")
-            return response
-
-        except Exception as e:
-            logger.error(f"Request failed for {url}: {e}")
-            if use_proxy:
-                logger.info("Attempting proxy request due to exception")
-                return HTTPRequestManager._make_proxy_request(url, *args, **kwargs)
-            raise
-
-    @staticmethod
-    def _make_proxy_request(url: str, *args, **kwargs) -> HTTPResponse:
-        logger.debug(f"Making proxy request for: {url}")
-
-        if "proxysite" in url:
-            logger.warning("Proxy URL detected, returning error page")
-            return HTTPRequestManager.make_request(
-                "https://catbox.moe/error.html",
-                method="GET",
-                use_proxy=False,
-                *args,
-                **kwargs,
-            )
-
-        proxy_number = randint(1, 15)
-        proxy_url = (
-            f"https://eu{proxy_number}.proxysite.com/includes/process.php?action=update"
-        )
-
-        proxy_data = {"d": url, "allowCookies": "on"}
-
-        return HTTPRequestManager.make_request(
-            proxy_url,
-            method="POST",
-            data=proxy_data,
-            use_proxy=False,  # Prevent recursive proxy calls
-            *args,
-            **kwargs,
-        )
-
-
 class StreamDataProcessor:
     @staticmethod
     def iterate_stream_chunks(
-        data_source: Union[IO, HTTPResponse, None], chunk_size: int = 1024
+        data_source: IO[bytes] | HTTPResponse | None, chunk_size: int = 1024
     ) -> Iterable[bytes]:
         if not data_source:
             logger.warning("No data source provided to stream processor")
@@ -191,7 +98,7 @@ class StreamDataProcessor:
             raise
 
 
-def time_string_to_seconds(time_str: str) -> float:
+def time_string_to_seconds(time_str: str | Any) -> float:
     if not time_str or not isinstance(time_str, str):
         logger.debug(f"invalid time string: {time_str}")
         return 0.0
@@ -206,7 +113,7 @@ def time_string_to_seconds(time_str: str) -> float:
             logger.warning(f"time string has too many parts: {time_str}")
             return 0.0
 
-        time_parts = []
+        time_parts: list[int] = []
         for part in reversed(parts):
             try:
                 time_parts.append(int(part))
@@ -232,7 +139,7 @@ def time_string_to_seconds(time_str: str) -> float:
         return 0.0
 
 
-def seconds_to_time_string(seconds: Union[int, float]) -> str:
+def seconds_to_time_string(seconds: int | float | Any) -> str:
     if not isinstance(seconds, (int, float)) or seconds < 0:
         return "0:00"
 

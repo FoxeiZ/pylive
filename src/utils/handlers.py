@@ -3,16 +3,17 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from flask import Response, abort, json, request
+from quart import Response, abort, json, request
 
 if TYPE_CHECKING:
-    from typing import Any, Iterable
+    from collections.abc import Callable, Iterable
+    from typing import Any
 
 
 logger = logging.getLogger(__name__)
 
 
-def create_response(
+async def create_response(
     data: Any = None,
     message: str = "success",
     is_error: bool = False,
@@ -43,8 +44,8 @@ def get_args(
     data: dict[str, str],
     check_args: Iterable[str | tuple[str, type]],
     raise_on_missing: bool = False,
-) -> dict:
-    extracted_args = {}
+) -> dict[str, Any]:
+    extracted_args: dict[str, Any] = {}
     for arg in check_args:
         if isinstance(arg, tuple):
             arg_name, arg_type = arg
@@ -56,9 +57,8 @@ def get_args(
                 extracted_args[arg_name] = data.get(arg_name) in ("1", "true", "True")
             else:
                 extracted_args[arg_name] = arg_type(data.get(arg_name))
-        else:
-            if raise_on_missing:
-                raise KeyError(f"{arg_name} is required")
+        elif raise_on_missing:
+            raise KeyError(f"{arg_name} is required")
 
     return extracted_args
 
@@ -67,20 +67,20 @@ def validate_request_args(
     required_args: Iterable[str | tuple[str, type]],
     optional_args: Iterable[str | tuple[str, type]] | None = None,
 ):
-    def decorator(func):
-        def wrapper(*args, **kwargs):
+    def decorator(func: Callable[..., Any]):
+        async def wrapper(*args, **kwargs):
             try:
                 if request.method == "GET":
                     data = request.args
                 elif request.method == "POST":
                     if request.is_json:
-                        data = request.get_json()
+                        data = await request.get_json()
                     else:
-                        data = request.form
+                        data = await request.form
                 else:
                     logger.warning(f"Unsupported request method: {request.method}")
                     return abort(
-                        create_error_response(
+                        await create_error_response(
                             message="Unsupported request method", status_code=405
                         )
                     )
@@ -88,7 +88,7 @@ def validate_request_args(
                 if data is None:
                     logger.warning("No data provided in request")
                     return abort(
-                        create_error_response(
+                        await create_error_response(
                             message="No data provided", status_code=400
                         )
                     )
@@ -97,12 +97,12 @@ def validate_request_args(
                 if optional_args is not None:
                     kwargs.update(get_args(data, optional_args, raise_on_missing=False))
 
-                return func(*args, **kwargs)
+                return await func(*args, **kwargs)
 
             except KeyError as e:
                 logger.error(f"Missing argument: {e}")
                 return abort(
-                    create_error_response(
+                    await create_error_response(
                         message=f"Missing argument: {e}", status_code=400
                     )
                 )
@@ -110,12 +110,12 @@ def validate_request_args(
             except Exception as e:
                 logger.error(f"Error validating request arguments: {e}")
                 return abort(
-                    create_error_response(
+                    await create_error_response(
                         message="Internal Server Error", status_code=500
                     )
                 )
 
-        wrapper.__name__ = func.__name__
+        wrapper.__name__ = func.__name__  # type: ignore
         return wrapper
 
     return decorator

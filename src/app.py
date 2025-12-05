@@ -5,8 +5,9 @@ import os
 import secrets
 from typing import TYPE_CHECKING
 
-from flask import Flask
+from quart import Quart
 
+from .extensions import asc
 from .routes import register_all_routes
 from .utils.handlers import create_error_response
 
@@ -40,8 +41,8 @@ def internal_server_error(error: HTTPException):
     )
 
 
-def create_app() -> Flask:
-    app = Flask(__name__, template_folder="templates", static_folder="static")
+def create_app() -> Quart:
+    app = Quart(__name__, template_folder="templates", static_folder="static")
     app.secret_key = _resolve_secret_key()
     app.config.update(
         TEMPLATES_AUTO_RELOAD=True,
@@ -50,10 +51,20 @@ def create_app() -> Flask:
         SESSION_COOKIE_HTTPONLY=False,
     )
 
-    app.register_error_handler(404, not_found_error)
-    app.register_error_handler(500, internal_server_error)
+    # app.register_error_handler(404, not_found_error)
+    # app.register_error_handler(500, internal_server_error)
 
     register_all_routes(app)
+
+    @app.before_serving
+    async def startup():
+        logger.info("starting audio stream controller")
+        await asc.start()
+
+    @app.after_serving
+    async def shutdown():
+        logger.info("stopping audio stream controller")
+        await asc.stop()
 
     if app.debug:
         app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0

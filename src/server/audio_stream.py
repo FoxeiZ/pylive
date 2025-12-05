@@ -2,21 +2,24 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import logging
 import struct
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
 from ..extractor import extract_video_info
-from ..models.extract import BaseExtractModel
+from ..models.extract import BaseExtractModel, ProcessedExtractModel
 from ..utils.validator import validate_typed_dict
+from .broadcaster import EventManager, EventType
 
 if TYPE_CHECKING:
-    from typing import AsyncGenerator, Callable, Coroutine, Iterable
+    from collections.abc import AsyncGenerator, Callable, Coroutine, Iterable, Iterator
 
-    from ..models.extract import ProcessedExtractModel
 
-logging.basicConfig(level=logging.DEBUG)
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,7 +53,7 @@ class BoundedHistory[T]:
     def __len__(self) -> int:
         return len(self._data)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[T]:
         return iter(self._data)
 
     def clear(self) -> None:
@@ -59,15 +62,15 @@ class BoundedHistory[T]:
 
 class AsyncOggPage:
     __slots__ = (
-        "header",
+        "crc",
+        "data",
         "flag",
         "gran_pos",
-        "serial",
+        "header",
         "pagenum",
-        "crc",
         "segnum",
         "segtable",
-        "data",
+        "serial",
     )
 
     def __init__(
@@ -118,8 +121,89 @@ class AsyncOggPage:
 
 
 class OggStreamProcessor:
-    _HEADER_STRUCT = struct.Struct("<xBQIIIB")
-    _HEADER_SIZE = _HEADER_STRUCT.size
+    HEADER_STRUCT = struct.Struct("<xBQIIIB")
+    HEADER_SIZE = HEADER_STRUCT.size
+
+    @staticmethod
+    def rewrite_serial(page_bytes: bytes, new_serial: int) -> bytes:
+        """rewrite the serial number in an ogg page and recalculate CRC."""
+        if len(page_bytes) < 27 or page_bytes[:4] != b"OggS":
+            return page_bytes
+
+        data = bytearray(page_bytes)
+
+        # write new serial number at offset 14 (little-endian)
+        struct.pack_into("<I", data, 14, new_serial)
+
+        # zero out CRC field before recalculating
+        data[22:26] = b"\x00\x00\x00\x00"
+
+        # calculate new CRC
+        new_crc = OggStreamProcessor._calculate_crc(bytes(data))
+        struct.pack_into("<I", data, 22, new_crc)
+
+        return bytes(data)
+
+    @staticmethod
+    def rewrite_header_pages(header_data: bytes, new_serial: int) -> bytes:
+        """rewrite serial numbers in all ogg pages within header data."""
+        result = bytearray()
+        offset = 0
+
+        while offset < len(header_data):
+            if header_data[offset : offset + 4] != b"OggS":
+                break
+
+            if len(header_data) < offset + 27:
+                break
+
+            # get segment count and calculate page size
+            segment_count = header_data[offset + 26]
+            header_size = 27 + segment_count
+
+            if len(header_data) < offset + header_size:
+                break
+
+            segment_table = header_data[offset + 27 : offset + header_size]
+            body_size = sum(segment_table)
+            total_page_size = header_size + body_size
+
+            if len(header_data) < offset + total_page_size:
+                break
+
+            # extract page and rewrite serial
+            page_bytes = header_data[offset : offset + total_page_size]
+            rewritten_page = OggStreamProcessor.rewrite_serial(page_bytes, new_serial)
+            result.extend(rewritten_page)
+
+            offset += total_page_size
+
+        return bytes(result)
+
+    @staticmethod
+    def _calculate_crc(data: bytes) -> int:
+        """calculate ogg CRC-32 checksum."""
+        crc_table = OggStreamProcessor._get_crc_table()
+        crc = 0
+        for byte in data:
+            crc = ((crc << 8) ^ crc_table[((crc >> 24) & 0xFF) ^ byte]) & 0xFFFFFFFF
+        return crc
+
+    @staticmethod
+    @functools.cache
+    def _get_crc_table() -> tuple[int, ...]:
+        """generate ogg CRC lookup table (cached)."""
+        table: list[int] = []
+        for i in range(256):
+            crc = i << 24
+            for _ in range(8):
+                crc = (
+                    (crc << 1 ^ 79764919) & 4294967295
+                    if crc & 2147483648
+                    else crc << 1 & 4294967295
+                )
+            table.append(crc)
+        return tuple(table)
 
     async def read_page(self, stdout: asyncio.StreamReader) -> AsyncOggPage | None:
         try:
@@ -129,7 +213,7 @@ class OggStreamProcessor:
                     return None
                 raise ValueError("invalid ogg header magic")
 
-            header_data = await stdout.readexactly(self._HEADER_SIZE)
+            header_data = await stdout.readexactly(self.HEADER_SIZE)
 
             (
                 flag,
@@ -138,7 +222,7 @@ class OggStreamProcessor:
                 pagenum,
                 crc,
                 segnum,
-            ) = self._HEADER_STRUCT.unpack(header_data)
+            ) = self.HEADER_STRUCT.unpack(header_data)
             segtable = await stdout.readexactly(segnum)
             bodylen = sum(segtable)
             body_data = await stdout.readexactly(bodylen)
@@ -188,7 +272,7 @@ class OggStreamProcessor:
 
 class AudioStreamController:
     def __init__(self) -> None:
-        self._loop: asyncio.AbstractEventLoop = asyncio.get_running_loop()
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._lock = asyncio.Lock()
         self._stopped = asyncio.Event()
         self._shutdown_requested = False
@@ -200,17 +284,38 @@ class AudioStreamController:
 
         self._stderr_task: asyncio.Task[None] | None = None
         self._handle_queue_task: asyncio.Task[None] | None = None
+        self._ogg_reading_task: asyncio.Task[None] | None = None
         self._active_forward_tasks: set[asyncio.Task[None]] = set()
 
         self._ffmpeg_process: asyncio.subprocess.Process | None = None
         self._feed_process: asyncio.subprocess.Process | None = None
         self._silence_process: asyncio.subprocess.Process | None = None
 
+        self._main_stream_serial: int | None = None
         self._cached_header: bytes | None = None
         self._header_expired: bool = True
+        self._headers_ready: asyncio.Event = asyncio.Event()
 
         self._audio_buffer_event = asyncio.Event()
         self._buffer_data: bytes = b""
+
+        self._broadcaster = EventManager()
+
+    @property
+    def now_playing(self) -> ProcessedExtractModel | None:
+        return self._now_playing
+
+    @property
+    def queue(self) -> list[BaseExtractModel]:
+        return list(self._queue._queue)  # type: ignore
+
+    @property
+    def auto_queue(self) -> list[BaseExtractModel]:
+        return list(self._auto_queue._queue)  # type: ignore
+
+    @property
+    def event_queue(self) -> EventManager:
+        return self._broadcaster
 
     async def _spawn_ffmpeg_process(
         self,
@@ -230,10 +335,14 @@ class AudioStreamController:
         return process
 
     async def _stop_ffmpeg_process(
-        self, process: asyncio.subprocess.Process, timeout: float = 5.0
+        self, process: asyncio.subprocess.Process | None, *, wait_timeout: float = 5.0
     ) -> None:
         """stop a given ffmpeg process."""
         if not process:
+            return
+
+        if process.returncode is not None:
+            logger.debug("process already terminated, skipping cleanup")
             return
 
         _io_errors = (BrokenPipeError, ConnectionResetError, OSError, ValueError)
@@ -245,13 +354,17 @@ class AudioStreamController:
 
         with contextlib.suppress(ProcessLookupError, OSError):
             process.terminate()
+
         try:
-            await asyncio.wait_for(process.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
+            async with asyncio.timeout(wait_timeout):
+                await process.wait()
+        except TimeoutError:
             with contextlib.suppress(ProcessLookupError, OSError):
                 process.kill()
-            await process.wait()
+            with contextlib.suppress(ProcessLookupError, OSError):
+                await process.wait()
 
+        # drain remaining output to prevent warnings
         if process.stdout:
             with contextlib.suppress(*_io_errors):
                 await process.stdout.read()
@@ -266,18 +379,11 @@ class AudioStreamController:
     ) -> bytes:
         """generate the Opus header for a given track."""
         logger.info("generating Opus header for track")
-        if not extra:
-            meta_args = {}
-        else:
-            meta_args = extra
+        meta_args = extra if extra else {}
 
         if track:
             for key in ("title", "artist", "album", "comment"):
-                val = None
-                if isinstance(track, dict):
-                    val = track.get(key)
-                else:
-                    val = getattr(track, key, None)
+                val = track.get(key)
                 if val:
                     meta_args[key] = val
 
@@ -296,42 +402,28 @@ class AudioStreamController:
         if meta_args:
             cmd = [*cmd, *[f"-metadata {key}={val}" for key, val in meta_args.items()]]
 
+        # fmt: off
         cmd.extend(
             [
                 "-vn",
-                "-c:a",
-                "libopus",
-                "-frames:a",
-                "0",
-                "-f",
-                "opus",
-                "-loglevel",
-                "error",
+                "-c:a", "libopus",
+                "-frames:a", "0",
+                "-ac", "2",
+                "-ar", "48000",
+                "-f", "ogg",
+                "-loglevel", "error",
                 "pipe:1",
             ]
         )
+        # fmt: on
 
         proc: asyncio.subprocess.Process | None = None
         proc = await self._spawn_ffmpeg_process(
             cmd, reason="generate header", stdin=None
         )
 
-        if not proc.stdout:
-            raise ValueError("ffmpeg header generator has no stdout pipe")
-
-        try:
-            data = await asyncio.wait_for(proc.stdout.read(8192), timeout=2.0)
-        except asyncio.TimeoutError:
-            raise ValueError("timeout while reading header from ffmpeg")
-
-        if data:
-            return data
-
-        if proc:
-            with contextlib.suppress(Exception):
-                await self._stop_ffmpeg_process(proc)
-
-        raise ValueError("no data received from ffmpeg header generator")
+        stdout, _ = await proc.communicate()
+        return stdout
 
     async def get_header(
         self,
@@ -339,19 +431,25 @@ class AudioStreamController:
         track: ProcessedExtractModel | None = None,
         extra: dict[str, str | int] | None = None,
     ) -> bytes:
-        """get cached header or generate a new one if expired."""
-        if self._cached_header and not self._header_expired:
-            return self._cached_header
+        """get current ogg header with correct serial number."""
+        if self._cached_header is None or self._header_expired:
+            raw_header = await self._generate_header(track=track, extra=extra)
 
-        track = track or self._now_playing
-        try:
-            header = await self._generate_header(track, extra)
-            self._cached_header = header
+            # rewrite serial to match main stream if available
+            if self._main_stream_serial is not None:
+                self._cached_header = OggStreamProcessor.rewrite_header_pages(
+                    raw_header, self._main_stream_serial
+                )
+                logger.debug(
+                    f"rewrote header serial to 0x{self._main_stream_serial:08X}"
+                )
+            else:
+                self._cached_header = raw_header
+                logger.warning("main stream serial not yet available, using original")
+
             self._header_expired = False
-            return header
-        except Exception as e:
-            logger.error(f"failed to get or generate header: {e}", exc_info=True)
-            raise
+
+        return self._cached_header
 
     async def _spawn_main_ffmpeg_process(self) -> asyncio.subprocess.Process:
         return await self._spawn_ffmpeg_process(
@@ -480,7 +578,7 @@ class AudioStreamController:
             while not self._stopped.is_set():
                 try:
                     line = await asyncio.wait_for(stderr.readline(), timeout=1.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
 
                 if not line:
@@ -509,10 +607,8 @@ class AudioStreamController:
 
         if not self._ffmpeg_process:
             logger.warning("main ffmpeg process not available; cancelling forwarder")
-            try:
+            with contextlib.suppress(Exception):
                 source_process.terminate()
-            except Exception:
-                pass
             return
 
         src_stdout = source_process.stdout
@@ -551,6 +647,11 @@ class AudioStreamController:
             logger.warning("no url provided to add to queue")
             return
 
+        logger.info(f"adding track to queue: {url}")
+        track_info = await extract_video_info(url, process=False)
+        await self._broadcaster.add_event(EventType.QUEUE_ADD, track_info)
+        await self._queue.put(track_info)
+
     def _filter_duplicate_tracks(
         self, tracks: list[BaseExtractModel]
     ) -> list[BaseExtractModel]:
@@ -558,7 +659,7 @@ class AudioStreamController:
             return []
 
         history_ids = set(self._track_history)
-        filtered_tracks = []
+        filtered_tracks: list[BaseExtractModel] = []
 
         for track in tracks:
             track_id = track.get("id")
@@ -576,39 +677,31 @@ class AudioStreamController:
 
     async def _populate_auto_queue(self) -> None:
         """populate the auto queue with related tracks."""
-        ...
 
-    async def _process_track(self, track: BaseExtractModel) -> ProcessedExtractModel:
+    async def _process_track(
+        self, track: BaseExtractModel | ProcessedExtractModel
+    ) -> ProcessedExtractModel:
         """process a track into a playable format."""
         logger.debug(
             f"processing track: {track.get('title', 'Unknown')} (ID: {track.get('id', 'Unknown')})"
         )
 
-        if track := validate_typed_dict(track, BaseExtractModel):
-            return await extract_video_info(track["webpage_url"], process=True)
-
-        if track := validate_typed_dict(track, ProcessedExtractModel):
-            if track["is_expired"]():
+        # check if already a ProcessedExtractModel
+        with contextlib.suppress(TypeError):
+            processed = validate_typed_dict(track, ProcessedExtractModel)
+            if processed["is_expired"]():
                 logger.info(
-                    f"track URL expired, re-extracting: {track.get('title', 'Unknown')} (ID: {track.get('id', 'Unknown')})"
+                    f"track URL expired, re-extracting: {processed.get('title', 'Unknown')} (ID: {processed.get('id', 'Unknown')})"  # noqa: E501
                 )
-                return await extract_video_info(track["webpage_url"], process=True)
-            return track
+                return await extract_video_info(processed["webpage_url"], process=True)
+            return processed
+
+        # otherwise, extract full info
+        with contextlib.suppress(TypeError):
+            base = validate_typed_dict(track, BaseExtractModel)
+            return await extract_video_info(base["webpage_url"], process=True)
 
         raise ValueError("invalid track data structure")
-
-    async def get_next_track(self) -> ProcessedExtractModel | None:
-        """get the next track from the queue without removing it."""
-        if self._stopped.is_set():
-            logger.debug("controller stopped; cannot get next track")
-            return None
-
-        try:
-            track = self._queue.get_nowait()
-            return await self._process_track(track)
-        except asyncio.QueueEmpty:
-            if self._now_playing:
-                return self._now_playing
 
     async def _handle_queue(self) -> None:
         logger.debug("starting queue handler")
@@ -616,7 +709,7 @@ class AudioStreamController:
         error_count = 0
         max_errors = 5
 
-        while not self._stopped.is_set():
+        while not self._stopped.is_set() and self._loop:
             try:
                 if self._queue.empty():
                     logger.debug("queue is empty, spawning silence process")
@@ -630,13 +723,19 @@ class AudioStreamController:
 
                 track_info = await self._queue.get()
                 track = await self._process_track(track_info)
-                logger.info("processing next track in queue")
+                logger.info(
+                    "processing next track in queue, %s, %s",
+                    repr(track_info),
+                    repr(track),
+                )
 
                 # stop silence process if running
                 await self._stop_silence_ffmpeg_process()
 
                 self._feed_process = await self._spawn_feed_ffmpeg_process(track)
                 await self._forward_process_output(self._feed_process)
+
+                error_count = 0  # reset on success
 
             except Exception as e:
                 error_count += 1
@@ -659,9 +758,28 @@ class AudioStreamController:
             return
 
         stdout = self._ffmpeg_process.stdout
+        header_pages_skipped = 0
 
         try:
             async for page in ogg_processor.iter_pages(stdout):
+                # capture serial from first page (BOS)
+                if page.flag & 0x02:  # BOS flag
+                    self._main_stream_serial = page.serial
+                    self._header_expired = True  # regenerate header with new serial
+                    self._headers_ready.set()
+                    logger.debug(
+                        f"captured main stream serial: 0x{self._main_stream_serial:08X}"
+                    )
+                    header_pages_skipped += 1
+                    continue
+
+                # skip OpusTags page (second header page)
+                if header_pages_skipped == 1 and page.gran_pos == 0:
+                    header_pages_skipped += 1
+                    logger.debug("skipping source OpusTags page")
+                    continue
+
+                # broadcast audio pages directly (serial already matches)
                 self._buffer_data = page.to_bytes()
                 self._audio_buffer_event.set()
                 self._audio_buffer_event.clear()
@@ -672,7 +790,8 @@ class AudioStreamController:
         except Exception as e:
             logger.error(f"error in ogg reading loop: {e}", exc_info=True)
 
-    async def start(self) -> None:
+    async def start(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
+        self._loop = loop or asyncio.get_running_loop()
         if self._ffmpeg_process:
             logger.warning("ffmpeg process already running")
             return
@@ -693,7 +812,19 @@ class AudioStreamController:
             self._handle_queue(),
             name="audio_queue_handler",
         )
-        await self._ogg_reading_loop()
+        self._ogg_reading_task = self._loop.create_task(
+            self._ogg_reading_loop(),
+            name="ogg_reading_loop",
+        )
+        logger.info("audio stream controller started")
+
+    def is_alive(self) -> bool:
+        """check if the audio stream controller is running."""
+        return (
+            self._ffmpeg_process is not None
+            and self._ffmpeg_process.returncode is None
+            and not self._stopped.is_set()
+        )
 
     async def stop(self) -> None:
         """gracefully stop the controller and clean up resources."""
@@ -705,10 +836,19 @@ class AudioStreamController:
         self._stopped.set()
 
         async def cancel_task(task: asyncio.Task[None] | None) -> None:
-            if task:
+            if task and not task.done():
                 task.cancel()
-                with contextlib.suppress(Exception):
-                    await asyncio.wait_for(task, timeout=2.0)
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
+
+        # stop subprocesses first to prevent broken pipe errors
+        await self._stop_feed_ffmpeg_process()
+        await self._stop_silence_ffmpeg_process()
+        await self._stop_main_ffmpeg_process()
+
+        # cancel ogg reading task
+        await cancel_task(self._ogg_reading_task)
+        self._ogg_reading_task = None
 
         # cancel queue task
         await cancel_task(self._handle_queue_task)
@@ -723,12 +863,37 @@ class AudioStreamController:
         await cancel_task(self._stderr_task)
         self._stderr_task = None
 
-        # stop subprocesses
-        await self._stop_feed_ffmpeg_process()
-        await self._stop_silence_ffmpeg_process()
-        await self._stop_main_ffmpeg_process()
-
         logger.info("audio stream controller stopped and cleaned up")
+
+    async def stream(self) -> AsyncGenerator[bytes, None]:
+        """async generator that yields audio data."""
+        if not self.is_alive():
+            raise RuntimeError("audio stream controller is not running")
+
+        try:
+            # wait for main stream serial to be captured
+            await asyncio.wait_for(self._headers_ready.wait(), timeout=10.0)
+
+            # send header with matching serial
+            header = await self.get_header()
+            yield header
+
+            # stream audio pages
+            while self.is_alive():
+                await self._audio_buffer_event.wait()
+                yield self._buffer_data
+
+        except TimeoutError:
+            logger.error("timeout waiting for stream headers")
+            raise RuntimeError("failed to initialize audio stream") from TimeoutError
+
+        except asyncio.CancelledError:
+            logger.debug("audio stream cancelled")
+            raise
+
+        except Exception:
+            logger.exception("error in audio stream")
+            raise
 
 
 if __name__ == "__main__":

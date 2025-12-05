@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, TypedDict, Union
+from typing import TypedDict
 
 
 class ClientResource(TypedDict):
@@ -6,41 +6,41 @@ class ClientResource(TypedDict):
 
 
 class ImageSource(TypedDict):
-    url: Optional[str]
-    width: Optional[int]
-    height: Optional[int]
-    clientResource: Optional[ClientResource]
+    url: str | None
+    width: int | None
+    height: int | None
+    clientResource: ClientResource | None
 
 
 class Image(TypedDict):
-    sources: List[ImageSource]
+    sources: list[ImageSource]
 
 
 class RendererContext(TypedDict):
-    accessibilityContext: Optional[Dict[str, str]]
+    accessibilityContext: dict[str, str] | None
 
 
 class ThumbnailBadgeViewModel(TypedDict):
-    text: Optional[str]
-    badgeStyle: Optional[str]
-    animationActivationTargetId: Optional[str]
-    animationActivationEntityKey: Optional[str]
-    lottieData: Optional[Dict[str, Union[str, Dict]]]
-    animatedText: Optional[str]
-    animationActivationEntitySelectorType: Optional[str]
-    rendererContext: Optional[RendererContext]
-    icon: Optional[Image]
-    backgroundColor: Optional[Dict[str, int]]
+    text: str | None
+    badgeStyle: str | None
+    animationActivationTargetId: str | None
+    animationActivationEntityKey: str | None
+    lottieData: dict[str, str | dict] | None
+    animatedText: str | None
+    animationActivationEntitySelectorType: str | None
+    rendererContext: RendererContext | None
+    icon: Image | None
+    backgroundColor: dict[str, int] | None
 
 
 class ThumbnailOverlayBadgeViewModel(TypedDict):
-    thumbnailBadges: List[Dict[str, ThumbnailBadgeViewModel]]
+    thumbnailBadges: list[dict[str, ThumbnailBadgeViewModel]]
     position: str
 
 
 class ButtonViewModel(TypedDict):
     iconName: str
-    onTap: Optional[Dict]
+    onTap: dict | None
     accessibilityText: str
     style: str
     trackingParams: str
@@ -50,44 +50,42 @@ class ButtonViewModel(TypedDict):
 
 
 class ToggleButtonViewModel(TypedDict):
-    defaultButtonViewModel: Dict[str, ButtonViewModel]
-    toggledButtonViewModel: Dict[str, ButtonViewModel]
+    defaultButtonViewModel: dict[str, ButtonViewModel]
+    toggledButtonViewModel: dict[str, ButtonViewModel]
     isToggled: bool
     trackingParams: str
 
 
 class ThumbnailHoverOverlayToggleActionsViewModel(TypedDict):
-    buttons: List[Dict[str, ToggleButtonViewModel]]
+    buttons: list[dict[str, ToggleButtonViewModel]]
 
 
 class ThumbnailHoverOverlayViewModel(TypedDict):
     icon: Image
-    text: Dict[str, Union[str, List]]
+    text: dict[str, str | list]
     style: str
 
 
 class ThumbnailOverlay(TypedDict):
-    thumbnailOverlayBadgeViewModel: Optional[ThumbnailOverlayBadgeViewModel]
-    thumbnailHoverOverlayToggleActionsViewModel: Optional[
-        ThumbnailHoverOverlayToggleActionsViewModel
-    ]
-    thumbnailHoverOverlayViewModel: Optional[ThumbnailHoverOverlayViewModel]
+    thumbnailOverlayBadgeViewModel: ThumbnailOverlayBadgeViewModel | None
+    thumbnailHoverOverlayToggleActionsViewModel: ThumbnailHoverOverlayToggleActionsViewModel | None
+    thumbnailHoverOverlayViewModel: ThumbnailHoverOverlayViewModel | None
 
 
 class ThumbnailViewModel(TypedDict):
     image: Image
-    overlays: List[ThumbnailOverlay]
-    backgroundColor: Optional[Dict[str, int]]
+    overlays: list[ThumbnailOverlay]
+    backgroundColor: dict[str, int] | None
 
 
 class CollectionThumbnailViewModel(TypedDict):
-    primaryThumbnail: Dict[str, ThumbnailViewModel]
-    stackColor: Dict[str, int]
+    primaryThumbnail: dict[str, ThumbnailViewModel]
+    stackColor: dict[str, int]
 
 
 class ContentImage(TypedDict):
-    thumbnailViewModel: Optional[ThumbnailViewModel]
-    collectionThumbnailViewModel: Optional[CollectionThumbnailViewModel]
+    thumbnailViewModel: ThumbnailViewModel | None
+    collectionThumbnailViewModel: CollectionThumbnailViewModel | None
 
 
 class AvatarViewModel(TypedDict):
@@ -96,15 +94,15 @@ class AvatarViewModel(TypedDict):
 
 
 class DecoratedAvatarViewModel(TypedDict):
-    avatar: Dict[str, AvatarViewModel]
+    avatar: dict[str, AvatarViewModel]
     a11yLabel: str
-    rendererContext: Dict
+    rendererContext: dict
 
 
 class TextContent(TypedDict):
     content: str
-    styleRuns: Optional[List[Dict]]
-    attachmentRuns: Optional[List[Dict]]
+    styleRuns: list[dict] | None
+    attachmentRuns: list[dict] | None
 
 
 class MetadataPart(TypedDict):
@@ -112,17 +110,17 @@ class MetadataPart(TypedDict):
 
 
 class MetadataRow(TypedDict):
-    metadataParts: List[MetadataPart]
+    metadataParts: list[MetadataPart]
 
 
 class ContentMetadataViewModel(TypedDict):
-    metadataRows: List[MetadataRow]
+    metadataRows: list[MetadataRow]
     delimiter: str
 
 
 class MenuButtonViewModel(TypedDict):
     iconName: str
-    onTap: Dict
+    onTap: dict
     accessibilityText: str
     style: str
     trackingParams: str
@@ -133,9 +131,9 @@ class MenuButtonViewModel(TypedDict):
 
 class LockupMetadataViewModel(TypedDict):
     title: TextContent
-    image: Optional[Dict[str, DecoratedAvatarViewModel]]
-    metadata: Dict[str, ContentMetadataViewModel]
-    menuButton: Optional[Dict[str, MenuButtonViewModel]]
+    image: dict[str, DecoratedAvatarViewModel] | None
+    metadata: dict[str, ContentMetadataViewModel]
+    menuButton: dict[str, MenuButtonViewModel] | None
 
 
 class Metadata(TypedDict):
@@ -144,7 +142,7 @@ class Metadata(TypedDict):
 
 class LoggingDirectives(TypedDict):
     trackingParams: str
-    visibility: Dict[str, str]
+    visibility: dict[str, str]
 
 
 class LoggingContext(TypedDict):
@@ -152,13 +150,13 @@ class LoggingContext(TypedDict):
 
 
 class CommandContext(TypedDict):
-    onTap: Dict
+    onTap: dict
 
 
 class LockupRendererContext(TypedDict):
     loggingContext: LoggingContext
-    accessibilityContext: Optional[Dict[str, str]]
-    commandContext: Optional[CommandContext]
+    accessibilityContext: dict[str, str] | None
+    commandContext: CommandContext | None
 
 
 class LockupViewModel(TypedDict):
@@ -173,4 +171,4 @@ class YouTubeRelatedVideo(TypedDict):
     lockupViewModel: LockupViewModel
 
 
-YouTubeRelatedVideosResponse = List[YouTubeRelatedVideo]
+YouTubeRelatedVideosResponse = list[YouTubeRelatedVideo]

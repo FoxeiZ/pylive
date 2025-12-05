@@ -1,8 +1,5 @@
-import atexit
-
 from .server import AudioStreamController
 
-__all__ = ["audio_controller"]
+__all__ = ["asc"]
 
-audio_controller = AudioStreamController()
-atexit.register(audio_controller.shutdown)
+asc = AudioStreamController()

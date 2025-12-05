@@ -1,18 +1,18 @@
-class VideoIsLiveException(Exception):
+class VideoIsLiveError(Exception):
     pass
 
 
-class VideoIsPrivateException(Exception):
+class VideoIsPrivateError(Exception):
     pass
 
 
-class VideoIsUnavailableException(Exception):
+class VideoIsUnavailableError(Exception):
     pass
 
 
-class VideoIsOverLengthException(Exception):
+class VideoIsOverLengthError(Exception):
     pass
 
 
-class PlaylistNotFoundException(Exception):
+class PlaylistNotFoundError(Exception):
     pass

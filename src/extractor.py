@@ -1,8 +1,11 @@
+# pyright: reportUnknownMemberType=false
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from collections.abc import Generator
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast, overload
 from urllib.parse import parse_qs, urlparse
 
@@ -10,7 +13,7 @@ from curl_cffi import AsyncSession, Response
 from yt_dlp import YoutubeDL
 
 from .constants import MAX_DURATION_SECONDS, MAX_PLAYLIST_ENTRIES, MAX_RELATED_TRACKS
-from .errors import VideoIsUnavailableException
+from .errors import VideoIsUnavailableError
 from .models.ytdlp_music import YouTubeMusicPlaylistDict
 from .utils.general import (
     get_and_cast,
@@ -20,7 +23,8 @@ from .utils.general import (
 from .utils.validator import validate_typed_dict
 
 if TYPE_CHECKING:
-    from typing import Callable, Generator, Iterable, Literal, Mapping
+    from collections.abc import Callable, Iterable, Mapping
+    from typing import Any, Literal
 
     from .models.extract import BaseExtractModel, ExtractModel, ProcessedExtractModel
 
@@ -78,27 +82,30 @@ async def extract_video_info(
     )
     if not data:
         logger.warning(f"No data extracted from URL: {url}")
-        raise VideoIsUnavailableException("The video is unavailable.")
+        raise VideoIsUnavailableError("The video is unavailable.")
 
     if data.get("entries"):
         logger.debug("Processing playlist entries")
         entries = data.get("entries", {})
-        if isinstance(entries, Generator):
-            data = next(entries)
-        else:
-            data = entries[0] if entries else None
+        data = (
+            next(entries)
+            if isinstance(entries, Generator)
+            else entries[0]
+            if entries
+            else None
+        )
 
         if not data:
             logger.warning("No valid entries found in playlist")
-            raise VideoIsUnavailableException("No valid playlist entries")
+            raise VideoIsUnavailableError("No valid playlist entries")
 
     if data.get("is_live"):
         logger.warning("live videos are not supported")
-        raise VideoIsUnavailableException("live videos are not supported.")
+        raise VideoIsUnavailableError("live videos are not supported.")
 
     if is_video_too_long(data):
         logger.warning("video exceeds maximum allowed duration")
-        raise VideoIsUnavailableException("video exceeds maximum allowed duration.")
+        raise VideoIsUnavailableError("video exceeds maximum allowed duration.")
 
     extract_info: ExtractModel = {
         "title": get_and_cast(data, "title", "Unknown Title"),
@@ -126,9 +133,8 @@ async def extract_video_info(
             "url": url,
             "format_duration": get_and_cast(data, "duration_string", "0:00"),
             "expires_in": expires_in,
-            "is_expired": lambda: expires_in != 0
-            and expires_in <= 0
-            or datetime.now(tz=timezone.utc).timestamp() >= expires_in,
+            "is_expired": lambda: (expires_in != 0 and expires_in <= 0)
+            or datetime.now(tz=UTC).timestamp() >= expires_in,
         }
         if thumbnail := get_and_cast(data, "thumbnail", None):
             processed_info["thumbnail"] = thumbnail
@@ -190,8 +196,8 @@ async def extract_video_info(
 
 
 def _process_related_entries(
-    entries: Iterable[Mapping],
-    parser: Callable[[Mapping], BaseExtractModel | None],
+    entries: Iterable[Mapping[str, Any]],
+    parser: Callable[[Mapping[str, Any]], BaseExtractModel | None],
     current_track_id: str | None,
 ) -> list[BaseExtractModel]:
     related_tracks: list[BaseExtractModel] = []
@@ -221,7 +227,7 @@ def _process_related_entries(
     return related_tracks
 
 
-def _parser_youtube_related_tracks(item: Mapping) -> BaseExtractModel | None:
+def _parser_youtube_related_tracks(item: Mapping[str, Any]) -> BaseExtractModel | None:
     lockup_view_model = item.get("lockupViewModel")
     if not (
         lockup_view_model
@@ -285,7 +291,7 @@ def _parser_youtube_related_tracks(item: Mapping) -> BaseExtractModel | None:
 
 async def get_youtube_related_tracks(
     video_info: BaseExtractModel,
-):
+) -> list[BaseExtractModel]:
     current_track_id = video_info.get("id", None)
     if not current_track_id:
         logger.warning("current track ID is missing, cannot fetch related tracks")
@@ -318,7 +324,7 @@ async def get_youtube_related_tracks(
             )
             return []
 
-        data = response.json()
+        data: dict[str, Any] = response.json()
         try:
             secondary_results = data["contents"]["twoColumnWatchNextResults"][
                 "secondaryResults"
@@ -334,7 +340,9 @@ async def get_youtube_related_tracks(
         return related_tracks
 
 
-def _parser_youtube_music_related_tracks(item: Mapping) -> BaseExtractModel | None:
+def _parser_youtube_music_related_tracks(
+    item: Mapping[str, Any],
+) -> BaseExtractModel | None:
     return {
         "title": get_and_cast(item, "title", "Unknown Title"),
         "id": get_and_cast(item, "id", "unknown"),

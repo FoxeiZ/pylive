@@ -1,18 +1,17 @@
 import logging
 import types
+from collections.abc import Mapping
 from typing import (
     Any,
-    Mapping,
     NotRequired,
-    TypedDict,
     get_args,
     get_origin,
     get_type_hints,
 )
 
 __all__ = [
-    "validate_typed_dict",
     "is_valid_typed_dict",
+    "validate_typed_dict",
 ]
 
 logger = logging.getLogger(__name__)
@@ -132,26 +131,3 @@ def is_valid_typed_dict[T](data: Mapping[str, Any], model: type[T]) -> bool:
     except (ValueError, TypeError) as e:
         logger.debug(f"validation failed for {model.__name__}: {e}")
         return False
-
-
-if __name__ == "__main__":
-
-    class BaseExtractModel(TypedDict):
-        title: str
-        id: str
-        duration: float
-        process: bool
-        webpage_url: NotRequired[str]
-
-    print(
-        validate_typed_dict(
-            {
-                "title": "title",
-                "id": "id",
-                "duration": 0.0,
-                "process": False,
-                "webpage_url": "webpage_url",
-            },
-            BaseExtractModel,
-        )
-    )
