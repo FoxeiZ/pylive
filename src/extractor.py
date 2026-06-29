@@ -4,23 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast, overload
 from urllib.parse import parse_qs, urlparse
 
-from curl_cffi import AsyncSession, Response
+import httpx
 from yt_dlp import YoutubeDL
 
-from .constants import MAX_DURATION_SECONDS, MAX_PLAYLIST_ENTRIES, MAX_RELATED_TRACKS
+from .constants import MAX_DURATION_SECONDS, MAX_RELATED_TRACKS, YTDL_OPTIONS
 from .errors import VideoIsUnavailableError
-from .models.ytdlp_music import YouTubeMusicPlaylistDict
 from .utils.general import (
     get_and_cast,
     human_readable_to_int,
     time_string_to_seconds,
 )
-from .utils.validator import validate_typed_dict
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
@@ -29,24 +27,6 @@ if TYPE_CHECKING:
     from .models.extract import BaseExtractModel, ExtractModel, ProcessedExtractModel
 
 logger = logging.getLogger(__name__)
-
-YTDL_OPTIONS = {
-    "nocheckcertificate": True,
-    "ignoreerrors": False,
-    "logtostderr": False,
-    "quiet": True,
-    "no_warnings": True,
-    "format": "bestaudio[ext=webm]/bestaudio/best",
-    "restrictfilenames": True,
-    "source_address": "0.0.0.0",
-    "playlist_items": f"1-{MAX_PLAYLIST_ENTRIES}",
-    "extract_flat": "in_playlist",
-    # "lazy_playlist": True,
-    "compat_opts": ["no-youtube-unavailable-videos"],
-    "playlistend": MAX_PLAYLIST_ENTRIES,
-    "playlistrandom": True,
-    "cookiesfrombrowser": ("firefox",),
-}
 
 
 _YtdlInstance = YoutubeDL(YTDL_OPTIONS)  # type: ignore
@@ -69,13 +49,63 @@ async def extract_video_info(url: str, process: Literal[False]) -> ExtractModel:
 async def extract_video_info(url: str) -> ProcessedExtractModel: ...
 
 
+def _parser_video_info(
+    data: Mapping[str, Any], url: str, process: bool = False
+) -> ExtractModel | ProcessedExtractModel:
+    extract_info: ExtractModel = {
+        "title": get_and_cast(data, "title", "Unknown Title"),
+        "id": get_and_cast(data, "id", "unknown"),
+        "webpage_url": (
+            get_and_cast(data, "webpage_url", None)
+            or get_and_cast(data, "original_url", None)
+            or get_and_cast(data, "url", url)
+        ),
+        "duration": get_and_cast(data, "duration", 0.0),
+        "channel": get_and_cast(data, "uploader", "Unknown Channel"),
+        "channel_url": (
+            get_and_cast(data, "uploader_url", "")
+            or get_and_cast(data, "channel_url", "")
+        ),
+        "process": False,
+        "extractor": get_and_cast(data, "extractor", "unknown"),
+    }
+
+    if process:
+        url = get_and_cast(data, "url", "")
+        expires_in = int(parse_qs(urlparse(url).query).get("expire", [None])[0] or 0)
+        processed_info: ProcessedExtractModel = {
+            **extract_info,
+            "url": url,
+            "format_duration": get_and_cast(data, "duration_string", "0:00"),
+            "expires_in": expires_in,
+            "is_expired": lambda: (
+                (expires_in != 0 and expires_in <= 0)
+                or datetime.now(tz=UTC).timestamp() >= expires_in
+            ),
+        }
+        if thumbnail := get_and_cast(data, "thumbnail", None):
+            processed_info["thumbnail"] = thumbnail
+        return processed_info
+    return extract_info
+
+
+@overload
+async def extract_video_info(
+    url: str, process: Literal[True]
+) -> ProcessedExtractModel: ...
+@overload
+async def extract_video_info(url: str, process: Literal[False]) -> ExtractModel: ...
+@overload
+async def extract_video_info(url: str) -> ProcessedExtractModel: ...
+
+
 async def extract_video_info(
     url: str, process: bool = True
 ) -> ExtractModel | ProcessedExtractModel:
     logger.info(f"extracting video info from url: {url}")
 
     data = cast(
-        "BaseExtractModel | None",
+        "BaseExtractModel | ProcessedExtractModel | None",
         await asyncio.to_thread(
             _YtdlInstance.extract_info, url, download=False, process=process
         ),
@@ -107,39 +137,7 @@ async def extract_video_info(
         logger.warning("video exceeds maximum allowed duration")
         raise VideoIsUnavailableError("video exceeds maximum allowed duration.")
 
-    extract_info: ExtractModel = {
-        "title": get_and_cast(data, "title", "Unknown Title"),
-        "id": get_and_cast(data, "id", "unknown"),
-        "webpage_url": (
-            get_and_cast(data, "webpage_url", None)
-            or get_and_cast(data, "original_url", None)
-            or get_and_cast(data, "url", url)
-        ),
-        "duration": get_and_cast(data, "duration", 0.0),
-        "channel": get_and_cast(data, "uploader", "Unknown Channel"),
-        "channel_url": (
-            get_and_cast(data, "uploader_url", "")
-            or get_and_cast(data, "channel_url", "")
-        ),
-        "process": False,
-        "extractor": get_and_cast(data, "extractor", "unknown"),
-    }
-
-    if process:
-        url = get_and_cast(data, "url", "")
-        expires_in = int(parse_qs(urlparse(url).query).get("expire", [None])[0] or 0)
-        processed_info: ProcessedExtractModel = {
-            **extract_info,
-            "url": url,
-            "format_duration": get_and_cast(data, "duration_string", "0:00"),
-            "expires_in": expires_in,
-            "is_expired": lambda: (expires_in != 0 and expires_in <= 0)
-            or datetime.now(tz=UTC).timestamp() >= expires_in,
-        }
-        if thumbnail := get_and_cast(data, "thumbnail", None):
-            processed_info["thumbnail"] = thumbnail
-        return processed_info
-    return extract_info
+    return _parser_video_info(data, url, process)
 
 
 # unused, not ported yet
@@ -193,6 +191,17 @@ async def extract_video_info(
 #     except Exception as e:
 #         logger.error(f"Error fetching playlist tracks: {e}")
 #         raise PlaylistNotFoundException(f"Failed to process playlist: {str(e)}")
+
+
+async def get_related_tracks(
+    video_info: BaseExtractModel,
+) -> Sequence[BaseExtractModel]:
+    result = await get_youtube_music_related_tracks(video_info.get("id", ""))
+    if result:
+        return result
+
+    logger.info("Falling back to standard YouTube related tracks")
+    return await get_youtube_related_tracks(video_info)
 
 
 def _process_related_entries(
@@ -257,7 +266,27 @@ def _parser_youtube_related_tracks(item: Mapping[str, Any]) -> BaseExtractModel 
             "0 views",
         )
     )
-    if view_count < 5000:
+    if view_count < 2000:
+        return None
+
+    duration = time_string_to_seconds(
+        get_and_cast(
+            lockup_view_model,
+            (
+                "contentImage",
+                "thumbnailViewModel",
+                "overlays",
+                0,
+                "thumbnailOverlayBadgeViewModel",
+                "thumbnailBadges",
+                0,
+                "thumbnailBadgeViewModel",
+                "text",
+            ),
+            "0:00",
+        )
+    )
+    if duration < 30 or duration > 540:
         return None
 
     return {
@@ -267,23 +296,7 @@ def _parser_youtube_related_tracks(item: Mapping[str, Any]) -> BaseExtractModel 
             "Unknown Title",
         ),
         "id": video_id,
-        "duration": time_string_to_seconds(
-            get_and_cast(
-                lockup_view_model,
-                (
-                    "contentImage",
-                    "thumbnailViewModel",
-                    "overlays",
-                    0,
-                    "thumbnailOverlayBadgeViewModel",
-                    "thumbnailBadges",
-                    0,
-                    "thumbnailBadgeViewModel",
-                    "text",
-                ),
-                "0:00",
-            ),
-        ),
+        "duration": duration,
         "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
         "process": False,
     }
@@ -291,7 +304,7 @@ def _parser_youtube_related_tracks(item: Mapping[str, Any]) -> BaseExtractModel 
 
 async def get_youtube_related_tracks(
     video_info: BaseExtractModel,
-) -> list[BaseExtractModel]:
+) -> Sequence[BaseExtractModel]:
     current_track_id = video_info.get("id", None)
     if not current_track_id:
         logger.warning("current track ID is missing, cannot fetch related tracks")
@@ -312,7 +325,7 @@ async def get_youtube_related_tracks(
         "racyCheckOk": True,
         "contentCheckOk": True,
     }
-    async with AsyncSession[Response]() as session:
+    async with httpx.AsyncClient() as session:
         response = await session.post(
             "https://www.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
             json=api_payload,
@@ -326,56 +339,147 @@ async def get_youtube_related_tracks(
 
         data: dict[str, Any] = response.json()
         try:
-            secondary_results = data["contents"]["twoColumnWatchNextResults"][
-                "secondaryResults"
-            ]["secondaryResults"]["results"]
+            secondary_results = get_and_cast(
+                data,
+                (
+                    "contents",
+                    "twoColumnWatchNextResults",
+                    "secondaryResults",
+                    "secondaryResults",
+                    "results",
+                ),
+                [],
+                strict=True,
+            )
+            # secondary_results
+            # data["contents"]["twoColumnWatchNextResults"]["secondaryResults"]["secondaryResults"]["results"]
         except KeyError as e:
             logger.error(f"error parsing related tracks response: {e}")
             return []
 
-        related_tracks = _process_related_entries(
-            secondary_results, _parser_youtube_related_tracks, current_track_id
-        )
-        logger.info(f"fetched {len(related_tracks)} related tracks from youtube")
+        related_tracks: list[BaseExtractModel] = []
+        for item in secondary_results:
+            parsed = _parser_youtube_related_tracks(item)
+            if parsed:
+                logging.info(f"related track found: {parsed}")
+                related_tracks.append(parsed)
+
+        logging.info(f"fetched {len(related_tracks)} related tracks from youtube")
         return related_tracks
 
 
 def _parser_youtube_music_related_tracks(
     item: Mapping[str, Any],
 ) -> BaseExtractModel | None:
+    panel_renderer: dict[str, Any] | None = item.get("playlistPanelVideoRenderer", None)
+    if not panel_renderer:
+        return None
+
+    video_id = panel_renderer.get("videoId")
+    if not video_id:
+        return None
+
+    duration = time_string_to_seconds(
+        get_and_cast(
+            panel_renderer,
+            (
+                "lengthText",
+                "runs",
+                0,
+                "text",
+            ),
+            "0:00",
+        )
+    )
+    if duration < 30 or duration > 540:
+        return None
+
+    title = get_and_cast(
+        panel_renderer,
+        (
+            "title",
+            "runs",
+            0,
+            "text",
+        ),
+        "Unknown Title",
+    )
+
     return {
-        "title": get_and_cast(item, "title", "Unknown Title"),
-        "id": get_and_cast(item, "id", "unknown"),
-        "webpage_url": get_and_cast(item, "url", ""),
-        "duration": get_and_cast(item, "duration", 0.0),
+        "title": title,
+        "id": video_id,
+        "duration": duration,
         "process": False,
+        "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
     }
 
 
 async def get_youtube_music_related_tracks(
-    video_info: BaseExtractModel,
-) -> list[BaseExtractModel]:
-    current_track_id = video_info.get("id", None)
-    if not current_track_id:
-        logger.warning("current track ID is missing, cannot fetch related tracks")
-        return []
+    current_track_id: str,
+) -> Sequence[BaseExtractModel]:
+    body = {
+        "context": {
+            "client": {
+                "hl": "en",
+                "gl": "US",
+                "clientName": "WEB_REMIX",
+                "clientVersion": "1.20220918.01.00",
+                "originalUrl": "https://www.youtube.com",
+                "platform": "DESKTOP",
+            },
+        },
+        "enablePersistentPlaylistPanel": True,
+        "isAudioOnly": True,
+        "tunerSettingValue": "AUTOMIX_SETTING_NORMAL",
+        "playlistId": f"RDAMVM{current_track_id}",
+        "params": "wAEB",
+    }
+    async with httpx.AsyncClient() as session:
+        response = await session.post(
+            "https://music.youtube.com/youtubei/v1/next?key=AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30&alt=json",
+            json=body,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0",
+            },
+        )
 
-    pl_id = f"RDAMVM{current_track_id}"
-    data = validate_typed_dict(
-        _YtdlInstance.extract_info(
-            url=f"https://music.youtube.com/watch?v={current_track_id}&list={pl_id}",
-            download=False,
-            process=False,
-        ),
-        YouTubeMusicPlaylistDict,
-    )
-    if not data:
-        logger.warning("no data extracted from youtube music")
-        return []
+        if response.status_code != 200:
+            logging.error(
+                f"failed to fetch related tracks, status code: {response.status_code}"
+            )
+            return []
 
-    entries = data.get("entries", [])
-    related_tracks = _process_related_entries(
-        entries, _parser_youtube_music_related_tracks, current_track_id
-    )
-    logger.info(f"fetched {len(related_tracks)} related tracks from youtube music")
-    return related_tracks
+        data: dict[str, Any] = response.json()
+        try:
+            sections = get_and_cast(
+                data,
+                (
+                    "contents",
+                    "singleColumnMusicWatchNextResultsRenderer",
+                    "tabbedRenderer",
+                    "watchNextTabbedResultsRenderer",
+                    "tabs",
+                    0,
+                    "tabRenderer",
+                    "content",
+                    "musicQueueRenderer",
+                    "content",
+                    "playlistPanelRenderer",
+                    "contents",
+                ),
+                [],
+                strict=True,
+            )
+        except KeyError as e:
+            logging.error(f"error parsing related tracks response: {e}")
+            return []
+
+        related_tracks: list[BaseExtractModel] = []
+        for section in sections:
+            parsed = _parser_youtube_music_related_tracks(section)
+            if parsed:
+                logging.info(f"related track found: {parsed}")
+                related_tracks.append(parsed)
+
+        logging.info(f"fetched {len(related_tracks)} related tracks from youtube music")
+        return related_tracks

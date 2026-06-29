@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from urllib import request as urllib_request
 
 if TYPE_CHECKING:
@@ -19,7 +19,10 @@ class NonRaisingHTTPErrorProcessor(urllib_request.HTTPErrorProcessor):
 
 
 def get_and_cast[T](
-    d: Mapping[str, Any], key: str | Iterable[str | int], default: T = None
+    d: Mapping[str, Any],
+    key: str | Iterable[str | int],
+    default: T = None,
+    strict: bool = False,
 ) -> T:
     if isinstance(key, str):
         key = [key]
@@ -27,7 +30,7 @@ def get_and_cast[T](
     value = d
     for k in key:
         if (isinstance(value, dict) and k in value) or (
-            isinstance(value, list) and isinstance(k, int) and 0 <= k < len(value)
+            isinstance(value, list) and isinstance(k, int) and 0 <= k < len(value)  # type: ignore
         ):
             value = value[k]  # type: ignore
         else:
@@ -35,6 +38,9 @@ def get_and_cast[T](
 
     if default is None:
         return value  # type: ignore
+
+    if not strict:
+        return cast("T", value)
 
     _type = type(default)
     try:

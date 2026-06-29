@@ -4,7 +4,11 @@ import asyncio
 import contextlib
 import functools
 import logging
+import os
+import signal
 import struct
+import subprocess
+import sys
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
@@ -271,6 +275,31 @@ class OggStreamProcessor:
 
 
 class AudioStreamController:
+    __slots__ = (
+        "_audio_buffer_event",
+        "_auto_queue",
+        "_broadcaster",
+        "_buffer_data",
+        "_cached_header",
+        "_feed_process",
+        "_ffmpeg_process",
+        "_handle_queue_task",
+        "_header_expired",
+        "_headers_ready",
+        "_lock",
+        "_loop",
+        "_main_stream_serial",
+        "_now_playing",
+        "_ogg_reading_task",
+        "_queue",
+        "_shutdown_requested",
+        "_silence_forwarder_task",
+        "_silence_process",
+        "_stderr_task",
+        "_stopped",
+        "_track_history",
+    )
+
     def __init__(self) -> None:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._lock = asyncio.Lock()
@@ -285,7 +314,7 @@ class AudioStreamController:
         self._stderr_task: asyncio.Task[None] | None = None
         self._handle_queue_task: asyncio.Task[None] | None = None
         self._ogg_reading_task: asyncio.Task[None] | None = None
-        self._active_forward_tasks: set[asyncio.Task[None]] = set()
+        self._silence_forwarder_task: asyncio.Task[None] | None = None
 
         self._ffmpeg_process: asyncio.subprocess.Process | None = None
         self._feed_process: asyncio.subprocess.Process | None = None
@@ -326,18 +355,29 @@ class AudioStreamController:
         stdout: int | None = asyncio.subprocess.PIPE,
         stderr: int | None = asyncio.subprocess.PIPE,
     ) -> asyncio.subprocess.Process:
-        """spawn the ffmpeg process"""
+        """spawn the ffmpeg process in a new process group."""
         logger.debug(f"spawning ffmpeg process, reason: {reason}")
 
+        # create process in new group for clean termination
+        if sys.platform == "win32":
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            creationflags = 0
+
         process = await asyncio.create_subprocess_exec(
-            *cmd, stdin=stdin, stdout=stdout, stderr=stderr
+            *cmd,
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            creationflags=creationflags,
+            start_new_session=(sys.platform != "win32"),
         )
         return process
 
     async def _stop_ffmpeg_process(
         self, process: asyncio.subprocess.Process | None, *, wait_timeout: float = 5.0
     ) -> None:
-        """stop a given ffmpeg process."""
+        """stop a given ffmpeg process and its children."""
         if not process:
             return
 
@@ -345,32 +385,41 @@ class AudioStreamController:
             logger.debug("process already terminated, skipping cleanup")
             return
 
+        pid = process.pid
         _io_errors = (BrokenPipeError, ConnectionResetError, OSError, ValueError)
 
         if process.stdin:
             with contextlib.suppress(*_io_errors):
+                logger.debug("closing process stdin")
                 process.stdin.close()
                 await process.stdin.wait_closed()
 
+        # send signal to process group
         with contextlib.suppress(ProcessLookupError, OSError):
-            process.terminate()
+            logger.debug("terminating ffmpeg process group")
+            if sys.platform == "win32":
+                os.kill(pid, signal.CTRL_BREAK_EVENT)
+            else:
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
 
         try:
             async with asyncio.timeout(wait_timeout):
+                logger.debug("waiting for process to terminate")
                 await process.wait()
+
         except TimeoutError:
+            logger.debug("timeout waiting for process, force killing")
             with contextlib.suppress(ProcessLookupError, OSError):
-                process.kill()
+                if sys.platform == "win32":
+                    process.kill()
+                else:
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
             with contextlib.suppress(ProcessLookupError, OSError):
                 await process.wait()
 
-        # drain remaining output to prevent warnings
-        if process.stdout:
-            with contextlib.suppress(*_io_errors):
-                await process.stdout.read()
-        if process.stderr:
-            with contextlib.suppress(*_io_errors):
-                await process.stderr.read()
+        # note: we don't drain stdout/stderr here to avoid memory issues
+        # with infinite sources like silence generators. The process is
+        # already terminated so the pipes will be closed automatically.
 
     async def _generate_header(
         self,
@@ -379,7 +428,7 @@ class AudioStreamController:
     ) -> bytes:
         """generate the Opus header for a given track."""
         logger.info("generating Opus header for track")
-        meta_args = extra if extra else {}
+        meta_args = extra or {}
 
         if track:
             for key in ("title", "artist", "album", "comment"):
@@ -387,20 +436,19 @@ class AudioStreamController:
                 if val:
                     meta_args[key] = val
 
+        # fmt: off
         cmd: list[str] = [
             "ffmpeg",
-            "-f",
-            "lavfi",
-            "-i",
-            "anullsrc=r=48000:cl=stereo",
-            "-af",
-            "aformat=sample_fmts=s16",
-            "-t",
-            "1",
+            "-f", "lavfi",
+            "-i", "anullsrc=r=48000:cl=stereo",
+            "-af", "aformat=sample_fmts=s16",
+            "-t", "1",
         ]
+        # fmt: on
 
         if meta_args:
-            cmd = [*cmd, *[f"-metadata {key}={val}" for key, val in meta_args.items()]]
+            for key, val in meta_args.items():
+                cmd.extend(["-metadata", f"{key}={val}"])
 
         # fmt: off
         cmd.extend(
@@ -526,6 +574,7 @@ class AudioStreamController:
         return await self._spawn_ffmpeg_process(
             [
                 "ffmpeg",
+                "-re",
                 "-f", "lavfi",
                 "-i", "anullsrc=r=48000:cl=stereo",
                 "-f", "s16le",
@@ -542,7 +591,14 @@ class AudioStreamController:
         # fmt: on
 
     async def _stop_silence_ffmpeg_process(self) -> None:
-        """stop the silence ffmpeg process if it exists."""
+        """stop the silence ffmpeg process and its forwarder task."""
+        # cancel the forwarder task first to prevent read errors
+        if self._silence_forwarder_task and not self._silence_forwarder_task.done():
+            self._silence_forwarder_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._silence_forwarder_task
+            self._silence_forwarder_task = None
+
         async with self._lock:
             if self._silence_process:
                 await self._stop_ffmpeg_process(self._silence_process)
@@ -673,7 +729,7 @@ class AudioStreamController:
         )
 
         # check if already a ProcessedExtractModel
-        with contextlib.suppress(TypeError):
+        with contextlib.suppress(ValueError):
             processed = validate_typed_dict(track, ProcessedExtractModel)
             if processed["is_expired"]():
                 logger.info(
@@ -683,7 +739,7 @@ class AudioStreamController:
             return processed
 
         # otherwise, extract full info
-        with contextlib.suppress(TypeError):
+        with contextlib.suppress(ValueError):
             base = validate_typed_dict(track, BaseExtractModel)
             return await extract_video_info(base["webpage_url"], process=True)
 
@@ -700,11 +756,9 @@ class AudioStreamController:
                 if self._queue.empty():
                     logger.debug("queue is empty, spawning silence process")
                     self._silence_process = await self._spawn_silence_ffmpeg_process()
-                    self._active_forward_tasks.add(
-                        self._loop.create_task(
-                            self._forward_process_output(self._silence_process),
-                            name="silence_forwarder",
-                        )
+                    self._silence_forwarder_task = self._loop.create_task(
+                        self._forward_process_output(self._silence_process),
+                        name="silence_forwarder",
                     )
 
                 track_info = await self._queue.get()
@@ -839,11 +893,6 @@ class AudioStreamController:
         # cancel queue task
         await cancel_task(self._handle_queue_task)
         self._handle_queue_task = None
-
-        # cancel tracked forwarder tasks
-        for task in set(self._active_forward_tasks):
-            await cancel_task(task)
-        self._active_forward_tasks.clear()
 
         # cancel stderr task
         await cancel_task(self._stderr_task)

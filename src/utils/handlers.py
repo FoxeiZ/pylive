@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from quart import Response, abort, json, request
 
@@ -23,7 +23,7 @@ async def create_response(
     response_body = {
         "msg": message,
         "error": is_error,
-        "data": data if data else None,
+        "data": data or None,
     }
 
     if extra:
@@ -36,8 +36,8 @@ async def create_response(
     )
 
 
-def create_error_response(*args, **kwargs):
-    return create_response(*args, is_error=True, **kwargs)
+async def create_error_response(*args: Any, **kwargs: Any) -> Response:
+    return await create_response(*args, is_error=True, **kwargs)
 
 
 def get_args(
@@ -68,7 +68,7 @@ def validate_request_args(
     optional_args: Iterable[str | tuple[str, type]] | None = None,
 ):
     def decorator(func: Callable[..., Any]):
-        async def wrapper(*args, **kwargs):
+        async def wrapper(*args: Any, **kwargs: Any) -> Response:
             try:
                 if request.method == "GET":
                     data = request.args
@@ -76,7 +76,7 @@ def validate_request_args(
                     if request.is_json:
                         data = await request.get_json()
                     else:
-                        data = await request.form
+                        data = cast("Any", await request.form)
                 else:
                     logger.warning(f"Unsupported request method: {request.method}")
                     return abort(

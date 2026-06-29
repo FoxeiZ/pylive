@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from quart import Blueprint, Quart
+from quart import Blueprint, Quart, Response
 
 from ..extensions import asc
 from ..utils.handlers import (
@@ -11,6 +12,9 @@ from ..utils.handlers import (
     create_response,
     validate_request_args,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +46,8 @@ def _is_valid_youtube_url(url: str) -> bool:
 
 
 def on_error_decorator(message: str):
-    def decorator(func):
-        async def wrapper(*args, **kwargs):
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        async def wrapper(*args: Any, **kwargs: Any) -> Response:
             try:
                 return await func(*args, **kwargs)
             except Exception as e:
