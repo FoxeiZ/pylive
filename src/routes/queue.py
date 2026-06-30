@@ -109,7 +109,7 @@ async def add_track_to_queue(url: str):
 @on_error_decorator("Failed to skip current track")
 async def skip_current_track():
     logger.info("Skipping current track")
-    await asc.skip_track()
+    await asc.skip_current_track()
     return await create_response(message="Track skipped successfully")
 
 

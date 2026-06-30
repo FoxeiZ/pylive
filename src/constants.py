@@ -47,11 +47,16 @@ YTDL_OPTIONS: dict[str, Any] = {
     "extractor_args": {
         "youtube": {
             "lang": ["en"],
-            "player_client": ["web"],
+            "player_client": ["mweb"],
+            "formats": "missing_pot",
+            "player_js_variant": ("tv",),
         },
         "youtubepot-bgutilhttp": {
             "base_url": ["https://bgutil-ytdlp-pot-vercal.vercel.app"]
         },
     },
     "js_runtimes": {"node": {}, "deno": {}},
+    "remote_components": {"ejs:github"},
+    "allowed_extractors": [r"^[yY].*[tT].*e?$"],
+    "retries": 10,
 }

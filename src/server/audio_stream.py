@@ -276,10 +276,10 @@ class OggStreamProcessor:
 
 class AudioStreamController:
     __slots__ = (
-        "_audio_buffer_event",
+        "_audio_listeners",
+        "_audio_listeners_lock",
         "_auto_queue",
         "_broadcaster",
-        "_buffer_data",
         "_cached_header",
         "_feed_process",
         "_ffmpeg_process",
@@ -325,9 +325,10 @@ class AudioStreamController:
         self._header_expired: bool = True
         self._headers_ready: asyncio.Event = asyncio.Event()
 
-        self._audio_buffer_event = asyncio.Event()
-        self._buffer_data: bytes = b""
+        self._audio_listeners: set[asyncio.Queue[bytes]] = set()
+        self._audio_listeners_lock = asyncio.Lock()
 
+        self._broadcaster = EventManager()
         self._broadcaster = EventManager()
 
     @property
@@ -392,7 +393,6 @@ class AudioStreamController:
             with contextlib.suppress(*_io_errors):
                 logger.debug("closing process stdin")
                 process.stdin.close()
-                await process.stdin.wait_closed()
 
         # send signal to process group
         with contextlib.suppress(ProcessLookupError, OSError):
@@ -406,6 +406,10 @@ class AudioStreamController:
             async with asyncio.timeout(wait_timeout):
                 logger.debug("waiting for process to terminate")
                 await process.wait()
+
+                if process.stdin:
+                    with contextlib.suppress(*_io_errors):
+                        await process.stdin.wait_closed()
 
         except TimeoutError:
             logger.debug("timeout waiting for process, force killing")
@@ -601,7 +605,7 @@ class AudioStreamController:
 
         async with self._lock:
             if self._silence_process:
-                await self._stop_ffmpeg_process(self._silence_process)
+                await self._stop_ffmpeg_process(self._silence_process, wait_timeout=0.1)
             self._silence_process = None
 
     async def _consume_ffmpeg_stderr(self) -> None:
@@ -802,10 +806,9 @@ class AudioStreamController:
 
         try:
             async for page in ogg_processor.iter_pages(stdout):
-                # capture serial from first page (BOS)
                 if page.flag & 0x02:  # BOS flag
                     self._main_stream_serial = page.serial
-                    self._header_expired = True  # regenerate header with new serial
+                    self._header_expired = True
                     self._headers_ready.set()
                     logger.debug(
                         f"captured main stream serial: 0x{self._main_stream_serial:08X}"
@@ -813,20 +816,25 @@ class AudioStreamController:
                     header_pages_skipped += 1
                     continue
 
-                # skip OpusTags page (second header page)
                 if header_pages_skipped == 1 and page.gran_pos == 0:
                     header_pages_skipped += 1
                     logger.debug("skipping source OpusTags page")
                     continue
 
-                # broadcast audio pages directly (serial already matches)
-                self._buffer_data = page.to_bytes()
-                self._audio_buffer_event.set()
-                self._audio_buffer_event.clear()
+                raw_page_data = page.to_bytes()
+
+                async with self._audio_listeners_lock:
+                    if self._audio_listeners:
+                        for listener_queue in list(self._audio_listeners):
+                            try:
+                                listener_queue.put_nowait(raw_page_data)
+                            except asyncio.QueueFull:
+                                logger.warning(
+                                    "Listener queue saturated. Dropping audio packet frame."
+                                )
 
         except asyncio.CancelledError:
             logger.debug("ogg reading loop task cancelled")
-
         except Exception as e:
             logger.error(f"error in ogg reading loop: {e}", exc_info=True)
 
@@ -866,6 +874,15 @@ class AudioStreamController:
             and not self._stopped.is_set()
         )
 
+    async def skip_current_track(self) -> None:
+        if not self.is_alive():
+            logger.warning("cannot skip track; audio stream controller is not running")
+            return
+
+        logger.info("skipping current track")
+        await self._stop_feed_ffmpeg_process()
+        await self._stop_silence_ffmpeg_process()
+
     async def stop(self) -> None:
         """gracefully stop the controller and clean up resources."""
         if self._stopped.is_set():
@@ -874,6 +891,8 @@ class AudioStreamController:
 
         logger.info("stopping audio stream controller")
         self._stopped.set()
+
+        await self._broadcaster.shutdown()
 
         async def cancel_task(task: asyncio.Task[None] | None) -> None:
             if task and not task.done():
@@ -886,58 +905,57 @@ class AudioStreamController:
         await self._stop_silence_ffmpeg_process()
         await self._stop_main_ffmpeg_process()
 
-        # cancel ogg reading task
-        await cancel_task(self._ogg_reading_task)
+        await asyncio.gather(
+            cancel_task(self._ogg_reading_task),
+            cancel_task(self._handle_queue_task),
+            cancel_task(self._stderr_task),
+        )
         self._ogg_reading_task = None
-
-        # cancel queue task
-        await cancel_task(self._handle_queue_task)
         self._handle_queue_task = None
-
-        # cancel stderr task
-        await cancel_task(self._stderr_task)
         self._stderr_task = None
 
         logger.info("audio stream controller stopped and cleaned up")
 
     async def stream(self) -> AsyncGenerator[bytes, None]:
-        """async generator that yields audio data."""
         if not self.is_alive():
             raise RuntimeError("audio stream controller is not running")
 
-        try:
-            # wait for main stream serial to be captured
-            await asyncio.wait_for(self._headers_ready.wait(), timeout=10.0)
+        client_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=100)
+        async with self._audio_listeners_lock:
+            self._audio_listeners.add(client_queue)
 
-            # send header with matching serial
+        try:
+            await asyncio.wait_for(self._headers_ready.wait(), timeout=10.0)
             header = await self.get_header()
             yield header
 
-            # stream audio pages
             while self.is_alive():
-                await self._audio_buffer_event.wait()
-                yield self._buffer_data
+                logger.debug(
+                    "waiting for next audio chunk, client queue size: %d, is_stopped: %s",
+                    client_queue.qsize(),
+                    self._stopped.is_set(),
+                )
+                chunk = await client_queue.get()
+                yield chunk
+                client_queue.task_done()
 
         except TimeoutError:
             logger.error("timeout waiting for stream headers")
             raise RuntimeError("failed to initialize audio stream") from TimeoutError
-
         except asyncio.CancelledError:
-            logger.debug("audio stream cancelled")
+            logger.debug("client connection decoupled from audio stream")
             raise
-
-        except Exception:
-            logger.exception("error in audio stream")
-            raise
+        finally:
+            async with self._audio_listeners_lock:
+                self._audio_listeners.discard(client_queue)
 
 
 if __name__ == "__main__":
 
     async def pp(controller: AudioStreamController):
         while True:
-            await controller._audio_buffer_event.wait()
-            logger.info(controller._audio_buffer_event.is_set())
-            logger.debug(controller._buffer_data[:32])
+            s = await controller.stream().__anext__()
+            logger.info(f"stream chunk received: {len(s)} bytes")
 
     async def main():
         controller = AudioStreamController()

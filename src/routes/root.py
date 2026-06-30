@@ -80,7 +80,7 @@ async def get_stream():
                 "Cache-Control": "no-cache",
             },
         )
-        response.timeout = None  # type: ignore
+        # response.timeout = None  type: ignore
         return response
 
     except Exception as e:

@@ -115,7 +115,7 @@ def validate_request_args(
                     )
                 )
 
-        wrapper.__name__ = func.__name__  # type: ignore
+        wrapper.__name__ = func.__name__
         return wrapper
 
     return decorator

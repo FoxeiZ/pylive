@@ -59,6 +59,15 @@ def create_app() -> Quart:
     @app.before_serving
     async def startup():
         logger.info("starting audio stream controller")
+        # old_handler = signal.getsignal(signal.SIGINT)
+
+        # def handle_sigint(signum: int, frame: Any) -> None:
+        #     loop = asyncio.get_running_loop()
+        #     loop.call_soon_threadsafe(lambda: asyncio.create_task(asc.stop()))
+        #     if callable(old_handler):
+        #         old_handler(signum, frame)
+
+        # signal.signal(signal.SIGINT, handle_sigint)
         await asc.start()
 
     @app.after_serving

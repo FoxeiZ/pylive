@@ -29,14 +29,19 @@ reportUnusedImport = false
 reportUnusedVariable = false
 reportUnusedFunction = false
 
+reportUninitializedInstanceVariable = "error"
+reportUnnecessaryTypeIgnoreComment  = "error"
+reportPrivateImportUsage            = "error"
 reportMissingParameterType = "information"
 reportUnknownParameterType = "information"
 reportUnknownVariableType  = "information"
 reportUnknownArgumentType  = "information"
-reportUnknownMemberType    = "warning"
-reportMissingTypeStubs     = false
-reportPrivateUsage         = false
-reportUninitializedInstanceVariable = "error"
+reportCallIssue            = "information"
+reportUnusedCallResult      = false
+reportUnknownMemberType     = false
+reportMissingTypeStubs      = false
+reportPrivateUsage          = false
+reportUnnecessaryIsInstance = false
 
 [tool.ruff]
 line-length = 88
@@ -81,20 +86,21 @@ select = [
 ]
 
 ignore = [
-    "ANN002",  # missing type annotation for *args
-    "ANN003",  # missing type annotation for **kwargs
-    "ANN101",  # missing type for self
-    "ANN102",  # missing type for cls
-    "ANN401",  # dynamically typed expressions (Any)
-    "ANN201",  # missing return type for public function
-    "ANN202",  # missing return type for private function
-    "ANN204",  # missing return type for __init__
-    "S101",    # use of assert
-    "PLR0913", # too many arguments
-    "PLR2004", # magic value comparison
-    "PLR0912", # too many branches
-    "PLR0915", # too many statements
-    "PLW0603", # global statement
+    "ANN002",   # missing type annotation for *args
+    "ANN003",   # missing type annotation for **kwargs
+    "ANN401",   # dynamically typed expressions (Any)
+    "ANN201",   # missing return type for public function
+    "ANN202",   # missing return type for private function
+    "ANN204",   # missing return type for __init__
+    "S101",     # use of assert
+    "PLR0913",  # too many arguments
+    "PLR2004",  # magic value comparison
+    "PLR0912",  # too many branches
+    "PLR0915",  # too many statements
+    "PLW0603",  # global statement
+    "ASYNC109", # Async function definition with a `timeout` parameter
+    "RUF001",   # String contains ambiguous
+    "F403",     # import "*" used; unable to detect undefined names
 ]
 
 [tool.ruff.lint.per-file-ignores]
