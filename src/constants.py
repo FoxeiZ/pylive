@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Any
+
+IS_WINDOWS = os.name == "nt"
 
 # audio streaming constants
 POLL_INTERVAL = 0.1  # seconds between FFmpeg stdin writes
@@ -43,7 +46,6 @@ YTDL_OPTIONS: dict[str, Any] = {
     "compat_opts": ["no-youtube-unavailable-videos"],
     "playlistend": MAX_PLAYLIST_ENTRIES,
     "playlistrandom": True,
-    "cookiesfrombrowser": ("firefox",),
     "extractor_args": {
         "youtube": {
             "lang": ["en"],
@@ -60,3 +62,10 @@ YTDL_OPTIONS: dict[str, Any] = {
     "allowed_extractors": [r"^[yY].*[tT].*e?$"],
     "retries": 10,
 }
+
+if IS_WINDOWS:
+    YTDL_OPTIONS.update(
+        {
+            "cookiesfrombrowser": ("firefox",),
+        }
+    )
