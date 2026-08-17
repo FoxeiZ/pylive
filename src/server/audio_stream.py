@@ -12,7 +12,7 @@ import sys
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
-from ..extractor import extract_video_info
+from ..extractor import extract_video_info, get_related_tracks
 from ..models.extract import BaseExtractModel, ProcessedExtractModel
 from ..utils.validator import validate_typed_dict
 from .broadcaster import EventManager, EventType
@@ -285,6 +285,7 @@ class AudioStreamController:
         "_ffmpeg_process",
         "_handle_queue_task",
         "_header_expired",
+        "_header_lock",
         "_headers_ready",
         "_lock",
         "_loop",
@@ -305,11 +306,12 @@ class AudioStreamController:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._lock = asyncio.Lock()
         self._stdin_lock = asyncio.Lock()
+        self._header_lock = asyncio.Lock()
         self._stopped = asyncio.Event()
         self._shutdown_requested = False
 
-        self._queue: asyncio.Queue[BaseExtractModel] = asyncio.Queue()
-        self._auto_queue: asyncio.Queue[BaseExtractModel] = asyncio.Queue()
+        self._queue: asyncio.Queue[BaseExtractModel] = asyncio.Queue(maxsize=500)
+        self._auto_queue: asyncio.Queue[BaseExtractModel] = asyncio.Queue(maxsize=500)
         self._track_history: BoundedHistory[str] = BoundedHistory(maxlen=100)
         self._now_playing: ProcessedExtractModel | None = None
 
@@ -485,24 +487,27 @@ class AudioStreamController:
         extra: dict[str, str | int] | None = None,
     ) -> bytes:
         """get current ogg header with correct serial number."""
-        if self._cached_header is None or self._header_expired:
-            raw_header = await self._generate_header(track=track, extra=extra)
+        async with self._header_lock:
+            if self._cached_header is None or self._header_expired:
+                raw_header = await self._generate_header(track=track, extra=extra)
 
-            # rewrite serial to match main stream if available
-            if self._main_stream_serial is not None:
-                self._cached_header = OggStreamProcessor.rewrite_header_pages(
-                    raw_header, self._main_stream_serial
-                )
-                logger.debug(
-                    f"rewrote header serial to 0x{self._main_stream_serial:08X}"
-                )
-            else:
-                self._cached_header = raw_header
-                logger.warning("main stream serial not yet available, using original")
+                # rewrite serial to match main stream if available
+                if self._main_stream_serial is not None:
+                    self._cached_header = OggStreamProcessor.rewrite_header_pages(
+                        raw_header, self._main_stream_serial
+                    )
+                    logger.debug(
+                        f"rewrote header serial to 0x{self._main_stream_serial:08X}"
+                    )
+                else:
+                    self._cached_header = raw_header
+                    logger.warning(
+                        "main stream serial not yet available, using original"
+                    )
 
-            self._header_expired = False
+                self._header_expired = False
 
-        return self._cached_header
+            return self._cached_header
 
     async def _spawn_main_ffmpeg_process(self) -> asyncio.subprocess.Process:
         # fmt: off
@@ -699,6 +704,9 @@ class AudioStreamController:
 
         logger.info(f"adding track to queue: {url}")
         track_info = await extract_video_info(url, process=False)
+        track_id = track_info.get("id")
+        if track_id:
+            self._track_history.add(track_id)
         await self._broadcaster.add_event(EventType.QUEUE_ADD, track_info)
         await self._queue.put(track_info)
 
@@ -725,8 +733,24 @@ class AudioStreamController:
         )
         return filtered_tracks
 
-    async def _populate_auto_queue(self) -> None:
+    async def _populate_auto_queue(
+        self, current_track: BaseExtractModel | ProcessedExtractModel
+    ) -> None:
         """populate the auto queue with related tracks."""
+        try:
+            related = await get_related_tracks(current_track)
+            filtered = self._filter_duplicate_tracks(list(related))
+            for track in filtered:
+                track_id = track.get("id")
+                if track_id:
+                    self._track_history.add(track_id)
+                try:
+                    self._auto_queue.put_nowait(track)
+                except asyncio.QueueFull:
+                    break
+            logger.info(f"populated auto queue with {len(filtered)} related tracks")
+        except Exception as e:
+            logger.warning(f"failed to populate auto queue: {e}")
 
     async def _process_track(
         self, track: BaseExtractModel | ProcessedExtractModel
@@ -736,7 +760,6 @@ class AudioStreamController:
             f"processing track: {track.get('title', 'Unknown')} (ID: {track.get('id', 'Unknown')})"
         )
 
-        # check if already a ProcessedExtractModel
         with contextlib.suppress(ValueError, TypeError):
             processed = validate_typed_dict(track, ProcessedExtractModel)
             if "is_expired" in processed and processed["is_expired"]():
@@ -746,7 +769,6 @@ class AudioStreamController:
                 return await extract_video_info(processed["webpage_url"], process=True)
             return processed
 
-        # otherwise, extract full info
         with contextlib.suppress(ValueError, TypeError):
             base = validate_typed_dict(track, BaseExtractModel)
             return await extract_video_info(base["webpage_url"], process=True)
@@ -760,23 +782,45 @@ class AudioStreamController:
 
         while not self._stopped.is_set() and self._loop:
             try:
-                if self._queue.empty():
+                if self._queue.empty() and self._auto_queue.empty():
                     async with self._lock:
                         if not self._silence_process:
                             logger.debug("queue is empty, spawning silence process")
-                            self._silence_process = await self._spawn_silence_ffmpeg_process()
+                            self._now_playing = None
+                            self._silence_process = (
+                                await self._spawn_silence_ffmpeg_process()
+                            )
                             self._silence_forwarder_task = self._loop.create_task(
                                 self._forward_process_output(self._silence_process),
                                 name="silence_forwarder",
                             )
 
-                track_info = await self._queue.get()
+                if not self._queue.empty():
+                    track_info = await self._queue.get()
+                elif not self._auto_queue.empty():
+                    track_info = await self._auto_queue.get()
+                else:
+                    track_info = await self._queue.get()
+
                 track = await self._process_track(track_info)
+                self._now_playing = track
+                await self._broadcaster.add_event(EventType.NOW_PLAYING, track)
+
+                track_id = track.get("id")
+                if track_id:
+                    self._track_history.add(track_id)
+
                 logger.info(
                     "processing next track in queue: %s (ID: %s)",
                     track.get("title", "Unknown"),
                     track.get("id", "Unknown"),
                 )
+
+                if self._auto_queue.qsize() < 5:
+                    self._loop.create_task(
+                        self._populate_auto_queue(track),
+                        name="populate_auto_queue",
+                    )
 
                 # stop silence process if running
                 await self._stop_silence_ffmpeg_process()
@@ -810,23 +854,18 @@ class AudioStreamController:
             return
 
         stdout = self._ffmpeg_process.stdout
-        header_pages_skipped = 0
 
         try:
             async for page in ogg_processor.iter_pages(stdout):
-                if page.flag & 0x02:  # BOS flag
+                if self._stopped.is_set():
+                    break
+
+                if not self._headers_ready.is_set() and (page.flag & 0x02):
                     self._main_stream_serial = page.serial
-                    self._header_expired = True
-                    self._headers_ready.set()
-                    logger.debug(
+                    logger.info(
                         f"captured main stream serial: 0x{self._main_stream_serial:08X}"
                     )
-                    header_pages_skipped += 1
-                    continue
-
-                if header_pages_skipped == 1 and page.gran_pos == 0:
-                    header_pages_skipped += 1
-                    logger.debug("skipping source OpusTags page")
+                    self._headers_ready.set()
                     continue
 
                 raw_page_data = page.to_bytes()
@@ -837,17 +876,25 @@ class AudioStreamController:
                             try:
                                 listener_queue.put_nowait(raw_page_data)
                             except asyncio.QueueFull:
-                                logger.warning(
-                                    "Listener queue saturated. Dropping audio packet frame."
-                                )
+                                with contextlib.suppress(asyncio.QueueEmpty):
+                                    listener_queue.get_nowait()
+                                with contextlib.suppress(asyncio.QueueFull):
+                                    listener_queue.put_nowait(raw_page_data)
 
         except asyncio.CancelledError:
             logger.debug("ogg reading loop task cancelled")
         except Exception as e:
             logger.error(f"error in ogg reading loop: {e}", exc_info=True)
+        finally:
+            async with self._audio_listeners_lock:
+                for listener_queue in list(self._audio_listeners):
+                    with contextlib.suppress(Exception):
+                        listener_queue.put_nowait(b"")
 
     async def start(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         self._loop = loop or asyncio.get_running_loop()
+        self._stopped.clear()
+        self._headers_ready.clear()
         if self._ffmpeg_process:
             logger.warning("ffmpeg process already running")
             return
@@ -902,6 +949,12 @@ class AudioStreamController:
 
         await self._broadcaster.shutdown()
 
+        # notify with eof sentinel
+        async with self._audio_listeners_lock:
+            for listener_queue in list(self._audio_listeners):
+                with contextlib.suppress(Exception):
+                    listener_queue.put_nowait(b"")
+
         async def cancel_task(task: asyncio.Task[None] | None) -> None:
             if task and not task.done():
                 task.cancel()
@@ -921,6 +974,7 @@ class AudioStreamController:
         self._ogg_reading_task = None
         self._handle_queue_task = None
         self._stderr_task = None
+        self._now_playing = None
 
         logger.info("audio stream controller stopped and cleaned up")
 
@@ -937,13 +991,10 @@ class AudioStreamController:
             header = await self.get_header()
             yield header
 
-            while self.is_alive():
-                logger.debug(
-                    "waiting for next audio chunk, client queue size: %d, is_stopped: %s",
-                    client_queue.qsize(),
-                    self._stopped.is_set(),
-                )
+            while self.is_alive() and not self._stopped.is_set():
                 chunk = await client_queue.get()
+                if not chunk:  # eof sentinel
+                    break
                 yield chunk
                 client_queue.task_done()
 

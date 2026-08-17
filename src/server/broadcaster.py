@@ -10,8 +10,6 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Mapping
     from typing import Any
 
-    from ..models.extract import BaseExtractModel
-
 logger = logging.getLogger(__name__)
 
 
@@ -44,10 +42,15 @@ class EventManager:
 
         self._shutdown_requested: bool = False
         self._user_queues: set[asyncio.Queue[str]] = set()
-        self._user_queues_lock = asyncio.Lock()
+        self._user_queues_lock: asyncio.Lock | None = None
         self._max_connections = max_connections
 
         logger.debug("eventManager initialized successfully")
+
+    def _get_lock(self) -> asyncio.Lock:
+        if self._user_queues_lock is None:
+            self._user_queues_lock = asyncio.Lock()
+        return self._user_queues_lock
 
     @property
     def shutdown_requested(self) -> bool:
@@ -66,20 +69,18 @@ class EventManager:
     async def watch(self) -> AsyncGenerator[str, None]:
         logger.debug("client connected to event stream")
 
-        async with self._user_queues_lock:
+        event_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=100)
+        async with self._get_lock():
             if len(self._user_queues) >= self._max_connections:
                 logger.warning("max SSE connections reached, rejecting client")
                 return
-
-        event_queue: asyncio.Queue[str] = asyncio.Queue()
-        async with self._user_queues_lock:
             self._user_queues.add(event_queue)
 
         try:
             while not self._shutdown_requested:
                 try:
                     event = await asyncio.wait_for(event_queue.get(), timeout=1.0)
-                    if event == EventType.SHUTDOWN:
+                    if event.startswith(f"event: {EventType.SHUTDOWN}") or self._shutdown_requested:
                         break
                     yield event
                 except TimeoutError:
@@ -89,12 +90,12 @@ class EventManager:
             logger.debug("client disconnected from event stream")
 
         finally:
-            async with self._user_queues_lock:
+            async with self._get_lock():
                 self._user_queues.discard(event_queue)
 
     async def _broadcast_event(self, event_data: str) -> None:
         """broadcast an event to all connected clients."""
-        async with self._user_queues_lock:
+        async with self._get_lock():
             queues = list(self._user_queues)
 
         for user_queue in queues:
@@ -105,7 +106,9 @@ class EventManager:
             except Exception as e:
                 logger.warning(f"failed to queue event for client: {e}")
 
-    async def add_event(self, event_type: EventType, data: BaseExtractModel) -> None:
+    async def add_event(
+        self, event_type: EventType, data: Mapping[str, Any] | None = None
+    ) -> None:
         if self._shutdown_requested:
             return
 
@@ -121,5 +124,6 @@ class EventManager:
         self._shutdown_requested = True
 
         await self._broadcast_event(self._craft_event(EventType.SHUTDOWN))
-        async with self._user_queues_lock:
+        async with self._get_lock():
             self._user_queues.clear()
+
