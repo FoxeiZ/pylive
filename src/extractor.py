@@ -29,7 +29,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-_YtdlInstance = YoutubeDL(YTDL_OPTIONS)  # type: ignore
+def _sync_extract_info(url: str, process: bool) -> Mapping[str, Any] | None:
+    with YoutubeDL(YTDL_OPTIONS) as ytdl:  # type: ignore
+        return ytdl.extract_info(url, download=False, process=process)
 
 
 def is_video_too_long(video_info: BaseExtractModel) -> bool:
@@ -79,8 +81,7 @@ def _parser_video_info(
             "format_duration": get_and_cast(data, "duration_string", "0:00"),
             "expires_in": expires_in,
             "is_expired": lambda: (
-                (expires_in != 0 and expires_in <= 0)
-                or datetime.now(tz=UTC).timestamp() >= expires_in
+                expires_in > 0 and datetime.now(tz=UTC).timestamp() >= expires_in
             ),
         }
         if thumbnail := get_and_cast(data, "thumbnail", None):
@@ -106,13 +107,11 @@ async def extract_video_info(
 
     data = cast(
         "BaseExtractModel | ProcessedExtractModel | None",
-        await asyncio.to_thread(
-            _YtdlInstance.extract_info, url, download=False, process=process
-        ),
+        await asyncio.to_thread(_sync_extract_info, url, process),
     )
     if not data:
-        logger.warning(f"No data extracted from URL: {url}")
-        raise VideoIsUnavailableError("The video is unavailable.")
+        logger.warning(f"no data extracted from url: {url}")
+        raise VideoIsUnavailableError("the video is unavailable.")
 
     if data.get("entries"):
         logger.debug("Processing playlist entries")

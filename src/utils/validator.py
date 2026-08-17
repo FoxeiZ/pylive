@@ -1,5 +1,6 @@
 import logging
 import types
+import typing
 from collections.abc import Mapping
 from typing import (
     Any,
@@ -21,13 +22,13 @@ def _get_base_type(type_hint: type) -> type | tuple[type, ...]:
     """extract base type from type hint, handling Optional/NotRequired/Union."""
     origin = get_origin(type_hint)
 
-    # handle NotRequired, Optional, Union
+    # handle NotRequired
     if origin is NotRequired:
         args = get_args(type_hint)
         return _get_base_type(args[0]) if args else object
 
-    # handle Union (e.g., str | None)
-    if origin is types.UnionType:
+    # handle Union (both | and typing.Union)
+    if origin is types.UnionType or origin is typing.Union:
         args = get_args(type_hint)
         # filter out NoneType and get remaining types
         non_none_types: list[type] = []
@@ -44,6 +45,10 @@ def _get_base_type(type_hint: type) -> type | tuple[type, ...]:
             return non_none_types[0]
         return tuple(non_none_types) if non_none_types else object
 
+    # handle Literal
+    if origin is typing.Literal:
+        return type_hint
+
     # handle generic types like dict[Any, Any], list[str]
     if origin is not None:
         return origin
@@ -56,6 +61,10 @@ def _check_type(value: object, expected_type: type | tuple[type, ...]) -> bool:
     if expected_type is Any or expected_type is object:
         return True
 
+    # handle Literal
+    if get_origin(expected_type) is typing.Literal:
+        return value in get_args(expected_type)
+
     if isinstance(expected_type, tuple):
         return any(_check_type(value, t) for t in expected_type)
 
@@ -63,7 +72,10 @@ def _check_type(value: object, expected_type: type | tuple[type, ...]) -> bool:
     if expected_type is float and isinstance(value, (int, float)):
         return True
 
-    return isinstance(value, expected_type)
+    try:
+        return isinstance(value, expected_type)
+    except TypeError:
+        return True
 
 
 def _is_optional(type_hint: type) -> bool:
@@ -74,7 +86,7 @@ def _is_optional(type_hint: type) -> bool:
         inner = get_args(type_hint)
         return _is_optional(inner[0]) if inner else True
 
-    if origin is types.UnionType:
+    if origin is types.UnionType or origin is typing.Union:
         return type(None) in get_args(type_hint)
 
     return False

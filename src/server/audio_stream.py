@@ -296,6 +296,7 @@ class AudioStreamController:
         "_silence_forwarder_task",
         "_silence_process",
         "_stderr_task",
+        "_stdin_lock",
         "_stopped",
         "_track_history",
     )
@@ -303,6 +304,7 @@ class AudioStreamController:
     def __init__(self) -> None:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._lock = asyncio.Lock()
+        self._stdin_lock = asyncio.Lock()
         self._stopped = asyncio.Event()
         self._shutdown_requested = False
 
@@ -328,7 +330,6 @@ class AudioStreamController:
         self._audio_listeners: set[asyncio.Queue[bytes]] = set()
         self._audio_listeners_lock = asyncio.Lock()
 
-        self._broadcaster = EventManager()
         self._broadcaster = EventManager()
 
     @property
@@ -563,6 +564,7 @@ class AudioStreamController:
             ],
             reason="feed track process",
             stdin=None,
+            stderr=asyncio.subprocess.DEVNULL,
         )
         # fmt: on
 
@@ -591,6 +593,7 @@ class AudioStreamController:
             ],
             reason="silence generation",
             stdin=None,
+            stderr=asyncio.subprocess.DEVNULL,
         )
         # fmt: on
 
@@ -669,8 +672,9 @@ class AudioStreamController:
                 if not chunk:
                     break
                 try:
-                    dst_stdin.write(chunk)
-                    await dst_stdin.drain()
+                    async with self._stdin_lock:
+                        dst_stdin.write(chunk)
+                        await dst_stdin.drain()
                 except Exception:
                     logger.error("failed to write to main ffmpeg stdin", exc_info=True)
                     break
@@ -733,9 +737,9 @@ class AudioStreamController:
         )
 
         # check if already a ProcessedExtractModel
-        with contextlib.suppress(ValueError):
+        with contextlib.suppress(ValueError, TypeError):
             processed = validate_typed_dict(track, ProcessedExtractModel)
-            if processed["is_expired"]():
+            if "is_expired" in processed and processed["is_expired"]():
                 logger.info(
                     f"track URL expired, re-extracting: {processed.get('title', 'Unknown')} (ID: {processed.get('id', 'Unknown')})"  # noqa: E501
                 )
@@ -743,7 +747,7 @@ class AudioStreamController:
             return processed
 
         # otherwise, extract full info
-        with contextlib.suppress(ValueError):
+        with contextlib.suppress(ValueError, TypeError):
             base = validate_typed_dict(track, BaseExtractModel)
             return await extract_video_info(base["webpage_url"], process=True)
 
@@ -753,44 +757,48 @@ class AudioStreamController:
         logger.debug("starting queue handler")
 
         error_count = 0
-        max_errors = 5
 
         while not self._stopped.is_set() and self._loop:
             try:
                 if self._queue.empty():
-                    logger.debug("queue is empty, spawning silence process")
-                    self._silence_process = await self._spawn_silence_ffmpeg_process()
-                    self._silence_forwarder_task = self._loop.create_task(
-                        self._forward_process_output(self._silence_process),
-                        name="silence_forwarder",
-                    )
+                    async with self._lock:
+                        if not self._silence_process:
+                            logger.debug("queue is empty, spawning silence process")
+                            self._silence_process = await self._spawn_silence_ffmpeg_process()
+                            self._silence_forwarder_task = self._loop.create_task(
+                                self._forward_process_output(self._silence_process),
+                                name="silence_forwarder",
+                            )
 
                 track_info = await self._queue.get()
                 track = await self._process_track(track_info)
                 logger.info(
-                    "processing next track in queue, %s, %s",
-                    repr(track_info),
-                    repr(track),
+                    "processing next track in queue: %s (ID: %s)",
+                    track.get("title", "Unknown"),
+                    track.get("id", "Unknown"),
                 )
 
                 # stop silence process if running
                 await self._stop_silence_ffmpeg_process()
 
-                self._feed_process = await self._spawn_feed_ffmpeg_process(track)
+                async with self._lock:
+                    self._feed_process = await self._spawn_feed_ffmpeg_process(track)
                 await self._forward_process_output(self._feed_process)
 
                 error_count = 0  # reset on success
 
-            except Exception as e:
-                error_count += 1
-                logger.error(f"error in queue handler: {e}", exc_info=True)
-                if error_count >= max_errors:
-                    logger.error("maximum error threshold reached in queue handler")
-                    break
-
             except asyncio.CancelledError:
                 logger.debug("queue handler task cancelled")
                 break
+
+            except Exception as e:
+                error_count += 1
+                backoff = min(error_count * 2, 10)
+                logger.error(
+                    f"error in queue handler (attempt {error_count}, retrying in {backoff}s): {e}",
+                    exc_info=True,
+                )
+                await asyncio.sleep(backoff)
 
     async def _ogg_reading_loop(self) -> None:
         logger.debug("starting ogg reading loop")
