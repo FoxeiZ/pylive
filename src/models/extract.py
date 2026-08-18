@@ -1,6 +1,5 @@
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from typing import (
-    Any,
     Literal,
     NotRequired,
     TypedDict,
@@ -19,7 +18,11 @@ class BaseExtractModel(TypedDict):
     duration: float
     process: bool
     webpage_url: str
-    entries: NotRequired[dict[Any, Any]]
+    is_live: NotRequired[bool]
+
+
+class BaseExtractPlaylistModel(BaseExtractModel):
+    entries: list[BaseExtractModel] | Generator[BaseExtractModel, None, None]
 
 
 class ExtractModel(BaseExtractModel):

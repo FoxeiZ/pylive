@@ -24,7 +24,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
     from typing import Any, Literal
 
-    from .models.extract import BaseExtractModel, ExtractModel, ProcessedExtractModel
+    from .models.extract import (
+        BaseExtractModel,
+        BaseExtractPlaylistModel,
+        ExtractModel,
+        ProcessedExtractModel,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -39,16 +44,6 @@ def is_video_too_long(video_info: BaseExtractModel) -> bool:
     if not duration or duration < 0:
         return True  # assume too long if no info
     return duration > MAX_DURATION_SECONDS
-
-
-@overload
-async def extract_video_info(
-    url: str, process: Literal[True]
-) -> ProcessedExtractModel: ...
-@overload
-async def extract_video_info(url: str, process: Literal[False]) -> ExtractModel: ...
-@overload
-async def extract_video_info(url: str) -> ProcessedExtractModel: ...
 
 
 def _parser_video_info(
@@ -106,7 +101,7 @@ async def extract_video_info(
     logger.info(f"extracting video info from url: {url}")
 
     data = cast(
-        "BaseExtractModel | ProcessedExtractModel | None",
+        "BaseExtractModel | ProcessedExtractModel |BaseExtractPlaylistModel | None",
         await asyncio.to_thread(_sync_extract_info, url, process),
     )
     if not data:
@@ -114,7 +109,7 @@ async def extract_video_info(
         raise VideoIsUnavailableError("the video is unavailable.")
 
     if data.get("entries"):
-        logger.debug("Processing playlist entries")
+        logger.debug("processing playlist entries")
         entries = data.get("entries", {})
         data = (
             next(entries)
@@ -125,8 +120,8 @@ async def extract_video_info(
         )
 
         if not data:
-            logger.warning("No valid entries found in playlist")
-            raise VideoIsUnavailableError("No valid playlist entries")
+            logger.warning("no valid entries found in playlist")
+            raise VideoIsUnavailableError("no valid playlist entries")
 
     if data.get("is_live"):
         logger.warning("live videos are not supported")
@@ -360,10 +355,10 @@ async def get_youtube_related_tracks(
         for item in secondary_results:
             parsed = _parser_youtube_related_tracks(item)
             if parsed:
-                logging.info(f"related track found: {parsed}")
+                logger.info(f"related track found: {parsed}")
                 related_tracks.append(parsed)
 
-        logging.info(f"fetched {len(related_tracks)} related tracks from youtube")
+        logger.info(f"fetched {len(related_tracks)} related tracks from youtube")
         return related_tracks
 
 
@@ -443,7 +438,7 @@ async def get_youtube_music_related_tracks(
         )
 
         if response.status_code != 200:
-            logging.error(
+            logger.error(
                 f"failed to fetch related tracks, status code: {response.status_code}"
             )
             return []
@@ -470,15 +465,15 @@ async def get_youtube_music_related_tracks(
                 strict=True,
             )
         except KeyError as e:
-            logging.error(f"error parsing related tracks response: {e}")
+            logger.error(f"error parsing related tracks response: {e}")
             return []
 
         related_tracks: list[BaseExtractModel] = []
         for section in sections:
             parsed = _parser_youtube_music_related_tracks(section)
             if parsed:
-                logging.info(f"related track found: {parsed}")
+                logger.info(f"related track found: {parsed}")
                 related_tracks.append(parsed)
 
-        logging.info(f"fetched {len(related_tracks)} related tracks from youtube music")
+        logger.info(f"fetched {len(related_tracks)} related tracks from youtube music")
         return related_tracks
