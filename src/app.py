@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import os
 import secrets
-from typing import TYPE_CHECKING
+import signal
+from typing import TYPE_CHECKING, Any
 
 from quart import Quart
 
@@ -59,15 +62,36 @@ def create_app() -> Quart:
     @app.before_serving
     async def startup():
         logger.info("starting audio stream controller")
-        # old_handler = signal.getsignal(signal.SIGINT)
+        loop = asyncio.get_running_loop()
 
-        # def handle_sigint(signum: int, frame: Any) -> None:
-        #     loop = asyncio.get_running_loop()
-        #     loop.call_soon_threadsafe(lambda: asyncio.create_task(asc.stop()))
-        #     if callable(old_handler):
-        #         old_handler(signum, frame)
+        old_handlers: dict[int, Any] = {}
 
-        # signal.signal(signal.SIGINT, handle_sigint)
+        def _signal_handler(sig_num: int, frame: Any) -> None:
+            logger.info(
+                f"received signal {sig_num}, initiating audio controller shutdown"
+            )
+            with contextlib.suppress(Exception):
+                loop.call_soon_threadsafe(lambda: asyncio.create_task(asc.stop()))
+            old = old_handlers.get(sig_num)
+            if callable(old) and old not in (
+                signal.SIG_DFL,
+                signal.SIG_IGN,
+                signal.default_int_handler,
+            ):
+                old(sig_num, frame)
+
+        for sig in (
+            getattr(signal, "SIGINT", None),
+            getattr(signal, "SIGTERM", None),
+            getattr(signal, "SIGBREAK", None),
+        ):
+            if sig is not None:
+                try:
+                    old_handlers[sig] = signal.getsignal(sig)
+                    signal.signal(sig, _signal_handler)
+                except (ValueError, OSError):
+                    pass
+
         await asc.start()
 
     @app.after_serving

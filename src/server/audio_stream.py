@@ -12,7 +12,7 @@ import sys
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
-from ..extractor import extract_video_info, get_related_tracks
+from ..extractor import extract_video_info, get_related_tracks, is_track_expired
 from ..models.extract import BaseExtractModel, ProcessedExtractModel
 from ..utils.validator import validate_typed_dict
 from .broadcaster import EventManager, EventType
@@ -762,7 +762,7 @@ class AudioStreamController:
 
         with contextlib.suppress(ValueError, TypeError):
             processed = validate_typed_dict(track, ProcessedExtractModel)
-            if "is_expired" in processed and processed["is_expired"]():
+            if is_track_expired(processed):
                 logger.info(
                     f"track URL expired, re-extracting: {processed.get('title', 'Unknown')} (ID: {processed.get('id', 'Unknown')})"  # noqa: E501
                 )
@@ -888,8 +888,13 @@ class AudioStreamController:
         finally:
             async with self._audio_listeners_lock:
                 for listener_queue in list(self._audio_listeners):
-                    with contextlib.suppress(Exception):
+                    try:
                         listener_queue.put_nowait(b"")
+                    except asyncio.QueueFull:
+                        with contextlib.suppress(asyncio.QueueEmpty):
+                            listener_queue.get_nowait()
+                        with contextlib.suppress(Exception):
+                            listener_queue.put_nowait(b"")
 
     async def start(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         self._loop = loop or asyncio.get_running_loop()
@@ -952,8 +957,13 @@ class AudioStreamController:
         # notify with eof sentinel
         async with self._audio_listeners_lock:
             for listener_queue in list(self._audio_listeners):
-                with contextlib.suppress(Exception):
+                try:
                     listener_queue.put_nowait(b"")
+                except asyncio.QueueFull:
+                    with contextlib.suppress(asyncio.QueueEmpty):
+                        listener_queue.get_nowait()
+                    with contextlib.suppress(Exception):
+                        listener_queue.put_nowait(b"")
 
         async def cancel_task(task: asyncio.Task[None] | None) -> None:
             if task and not task.done():
@@ -992,7 +1002,13 @@ class AudioStreamController:
             yield header
 
             while self.is_alive() and not self._stopped.is_set():
-                chunk = await client_queue.get()
+                try:
+                    chunk = await asyncio.wait_for(client_queue.get(), timeout=1.0)
+                except TimeoutError:
+                    if self._stopped.is_set() or not self.is_alive():
+                        break
+                    continue
+
                 if not chunk:  # eof sentinel
                     break
                 yield chunk
