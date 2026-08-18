@@ -1,4 +1,4 @@
-from typing import TypedDict
+from typing import Any, TypedDict
 
 
 class ClientResource(TypedDict):
@@ -25,7 +25,7 @@ class ThumbnailBadgeViewModel(TypedDict):
     badgeStyle: str | None
     animationActivationTargetId: str | None
     animationActivationEntityKey: str | None
-    lottieData: dict[str, str | dict] | None
+    lottieData: dict[str, str | dict[str, Any]] | None
     animatedText: str | None
     animationActivationEntitySelectorType: str | None
     rendererContext: RendererContext | None
@@ -40,7 +40,7 @@ class ThumbnailOverlayBadgeViewModel(TypedDict):
 
 class ButtonViewModel(TypedDict):
     iconName: str
-    onTap: dict | None
+    onTap: dict[str, Any] | None
     accessibilityText: str
     style: str
     trackingParams: str
@@ -62,7 +62,7 @@ class ThumbnailHoverOverlayToggleActionsViewModel(TypedDict):
 
 class ThumbnailHoverOverlayViewModel(TypedDict):
     icon: Image
-    text: dict[str, str | list]
+    text: dict[str, str | list[Any]]
     style: str
 
 
@@ -96,13 +96,13 @@ class AvatarViewModel(TypedDict):
 class DecoratedAvatarViewModel(TypedDict):
     avatar: dict[str, AvatarViewModel]
     a11yLabel: str
-    rendererContext: dict
+    rendererContext: dict[str, Any]
 
 
 class TextContent(TypedDict):
     content: str
-    styleRuns: list[dict] | None
-    attachmentRuns: list[dict] | None
+    styleRuns: list[dict[str, Any]] | None
+    attachmentRuns: list[dict[str, Any]] | None
 
 
 class MetadataPart(TypedDict):
@@ -120,7 +120,7 @@ class ContentMetadataViewModel(TypedDict):
 
 class MenuButtonViewModel(TypedDict):
     iconName: str
-    onTap: dict
+    onTap: dict[str, Any]
     accessibilityText: str
     style: str
     trackingParams: str
@@ -150,7 +150,7 @@ class LoggingContext(TypedDict):
 
 
 class CommandContext(TypedDict):
-    onTap: dict
+    onTap: dict[str, Any]
 
 
 class LockupRendererContext(TypedDict):
