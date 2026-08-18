@@ -63,7 +63,13 @@ class EventManager:
     def _craft_event(
         self, event_type: EventType, data: Mapping[str, Any] | None = None
     ) -> str:
-        data_str = json.dumps(data) if data is not None else "null"
+        try:
+            data_str = json.dumps(data) if data is not None else "null"
+        except (TypeError, ValueError):
+            logger.warning(
+                f"failed to serialize event data for {event_type}, falling back to string conversion"
+            )
+            data_str = json.dumps(data, default=str) if data is not None else "null"
         return f"event: {event_type}\ndata: {data_str}\n\n"
 
     async def watch(self) -> AsyncGenerator[str, None]:

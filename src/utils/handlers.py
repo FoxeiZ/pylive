@@ -27,10 +27,16 @@ async def create_response(
     }
 
     if extra:
-        response_body.update({"extra": extra})
+        response_body["extra"] = extra
+
+    try:
+        response_json = json.dumps(response_body)
+    except (TypeError, ValueError):
+        logger.warning("failed to serialize response body directly, falling back to default string conversion")
+        response_json = json.dumps(response_body, default=str)
 
     return Response(
-        response=json.dumps(response_body),
+        response=response_json,
         status=status_code,
         content_type="application/json",
     )

@@ -1,6 +1,5 @@
-from collections.abc import Callable, Generator
+from collections.abc import Generator
 from typing import (
-    Literal,
     NotRequired,
     TypedDict,
 )
@@ -36,5 +35,5 @@ class ProcessedExtractModel(ExtractModel):
     url: str
     format_duration: str
     thumbnail: NotRequired[str]
-    expires_in: int | Literal[0]
-    is_expired: Callable[[], bool]
+    expires_in: int
+

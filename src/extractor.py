@@ -46,6 +46,15 @@ def is_video_too_long(video_info: BaseExtractModel) -> bool:
     return duration > MAX_DURATION_SECONDS
 
 
+def is_track_expired(
+    track: ProcessedExtractModel | BaseExtractModel | Mapping[str, Any],
+) -> bool:
+    expires_in = track.get("expires_in", 0)
+    if isinstance(expires_in, (int, float)) and expires_in > 0:
+        return datetime.now(tz=UTC).timestamp() >= expires_in
+    return False
+
+
 def _parser_video_info(
     data: Mapping[str, Any], url: str, process: bool = False
 ) -> ExtractModel | ProcessedExtractModel:
@@ -75,9 +84,6 @@ def _parser_video_info(
             "url": url,
             "format_duration": get_and_cast(data, "duration_string", "0:00"),
             "expires_in": expires_in,
-            "is_expired": lambda: (
-                expires_in > 0 and datetime.now(tz=UTC).timestamp() >= expires_in
-            ),
         }
         if thumbnail := get_and_cast(data, "thumbnail", None):
             processed_info["thumbnail"] = thumbnail
