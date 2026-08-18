@@ -1,9 +1,10 @@
 import logging
 
 from src.app import create_app
+from src.config import Config
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=Config.LOG_LEVEL,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler()],
 )
