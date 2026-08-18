@@ -9,7 +9,6 @@ from ..extensions import asc
 from ..utils.handlers import (
     create_error_response,
     create_response,
-    validate_request_args,
 )
 
 if TYPE_CHECKING:
@@ -114,15 +113,3 @@ async def get_now_playing():
 
 def register_routes(app: Quart):
     app.register_blueprint(bp, url_prefix="/")
-
-
-@bp.route("/test")
-@validate_request_args(required_args=[("param1", int)], optional_args=[("param2", str)])
-async def test_endpoint(param1: int, param2: str | None = None):
-    try:
-        logger.debug(f"Test endpoint called with param1={param1}, param2={param2}")
-        data = {"param1": param1, "param2": param2}
-        return await create_response(data=data, message="Test endpoint successful")
-    except Exception as e:
-        logger.error(f"Error in test endpoint: {e}")
-        return await create_error_response(message="Test endpoint failed")

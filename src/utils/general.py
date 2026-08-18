@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import re
 from typing import TYPE_CHECKING, cast
-from urllib import request as urllib_request
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -12,10 +11,6 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-
-
-class NonRaisingHTTPErrorProcessor(urllib_request.HTTPErrorProcessor):
-    http_response = https_response = lambda self, request, response: response
 
 
 def get_and_cast[T](
@@ -119,16 +114,16 @@ def time_string_to_seconds(time_str: str | Any) -> float:
             logger.warning(f"time string has too many parts: {time_str}")
             return 0.0
 
-        time_parts: list[int] = []
+        time_parts: list[float] = []
         for part in reversed(parts):
             try:
-                time_parts.append(int(part))
+                time_parts.append(float(part))
             except ValueError:
                 logger.warning(f"invalid time component '{part}' in: {time_str}")
                 return 0.0
 
         total_seconds = 0.0
-        multipliers = [1, 60, 3600]
+        multipliers = [1.0, 60.0, 3600.0]
 
         for i, value in enumerate(time_parts):
             if i < len(multipliers):
