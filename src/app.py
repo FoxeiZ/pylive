@@ -28,14 +28,14 @@ def _resolve_secret_key() -> str:
     return generated_key
 
 
-def not_found_error(_: HTTPException):
-    """Handle 404 errors."""
-    return create_error_response(message="Resource not found", status_code=404)
+async def not_found_error(_: HTTPException):
+    """handle 404 errors."""
+    return await create_error_response(message="Resource not found", status_code=404)
 
 
-def internal_server_error(error: HTTPException):
-    """Handle 500 errors."""
-    return create_error_response(
+async def internal_server_error(error: HTTPException):
+    """handle 500 errors."""
+    return await create_error_response(
         message=error.description or "Internal Server Error",
         status_code=error.code or 500,
     )
@@ -51,8 +51,8 @@ def create_app() -> Quart:
         SESSION_COOKIE_HTTPONLY=False,
     )
 
-    # app.register_error_handler(404, not_found_error)
-    # app.register_error_handler(500, internal_server_error)
+    app.register_error_handler(404, not_found_error)
+    app.register_error_handler(500, internal_server_error)
 
     register_all_routes(app)
 
