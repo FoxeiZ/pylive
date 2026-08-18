@@ -64,22 +64,24 @@ def on_error_decorator(message: str):
 @on_error_decorator("Failed to get queue information")
 @validate_request_args(
     required_args=[],
-    optional_args=[("index", int), ("page", int), ("use_autoplay", bool)],
+    optional_args=[("page", int), ("use_autoplay", bool)],
 )
 async def get_queue_info(page: int = 0, use_autoplay: bool = False):
     queue = asc.queue
     auto_queue = asc.auto_queue
 
     items_per_page = 5
-    end_offset = min((page + 1) * items_per_page, len(queue))
-    start_offset = max(end_offset - items_per_page, 0)
+    start_offset = max(page, 0) * items_per_page
+    end_offset = start_offset + items_per_page
 
-    response_data = {
+    response_data: dict[str, Any] = {
         "queue": queue[start_offset:end_offset],
+        "page": page,
+        "total_items": len(queue),
     }
 
     if use_autoplay and auto_queue:
-        response_data.update({"auto_queue": auto_queue})
+        response_data["auto_queue"] = auto_queue
 
     return await create_response(data=response_data)
 
