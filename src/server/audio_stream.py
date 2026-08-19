@@ -804,7 +804,13 @@ class AudioStreamController:
 
                 track = await self._process_track(track_info)
                 self._now_playing = track
-                await self._broadcaster.add_event(EventType.NOW_PLAYING, track)
+
+                strip_track = track.copy()
+                strip_track.pop("process", None)
+                strip_track.pop("extractor", None)
+                strip_track.pop("url", None)
+                strip_track.pop("expires_in", None)
+                await self._broadcaster.add_event(EventType.NOW_PLAYING, strip_track)
 
                 track_id = track.get("id")
                 if track_id:
