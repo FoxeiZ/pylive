@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from quart import Blueprint, Quart, make_response, render_template, request
 
+from ..auth import get_current_user
 from ..extensions import asc
 from ..utils.handlers import (
     create_error_response,
@@ -25,18 +26,23 @@ bp = Blueprint("root", __name__)
 @bp.route("/")
 async def new_page():
     try:
+        user = await get_current_user()
+        user_data = user.to_public_dict() if user else None
+
         if not asc:
             return await render_template(
                 "index.html",
                 np={},
                 queue=[],
                 auto_queue=[],
+                user=user_data,
             )
         return await render_template(
             "index.html",
             np=asc.now_playing or {},
             queue=asc.queue,
             auto_queue=asc.auto_queue,
+            user=user_data,
         )
 
     except Exception as e:

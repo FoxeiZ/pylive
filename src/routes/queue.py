@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 from quart import Blueprint, Quart, Response
 
+from ..auth import Permission, require_permission
 from ..extensions import asc
 from ..utils.handlers import (
     create_error_response,
@@ -93,6 +94,7 @@ async def get_auto_queue():
 
 
 @bp.route("/add", methods=["POST"])
+@require_permission(Permission.QUEUE_ADD)
 @on_error_decorator("Failed to add track to queue")
 @validate_request_args(required_args=[("url", str)])
 async def add_track_to_queue(url: str):
@@ -108,6 +110,7 @@ async def add_track_to_queue(url: str):
 
 
 @bp.route("/skip", methods=["POST"])
+@require_permission(Permission.QUEUE_SKIP_VOTE)
 @on_error_decorator("Failed to skip current track")
 async def skip_current_track():
     logger.info("Skipping current track")

@@ -3,34 +3,12 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
+from src.config import Config
+
 if TYPE_CHECKING:
     from typing import Any
 
 IS_WINDOWS = os.name == "nt"
-
-# audio streaming constants
-POLL_INTERVAL = 0.1  # seconds between FFmpeg stdin writes
-AUDIO_BUFFER_SIZE = 4096  # bytes per audio read chunk
-
-# queue limits
-QUEUE_MAX_SIZE = 50
-TRACK_HISTORY_SIZE = 50
-MAX_SSE_CONNECTIONS = 1000
-
-# video duration limits
-MAX_DURATION_SECONDS = 8 * 60  # 8 minutes (480 seconds)
-
-# playlist and related tracks limits
-MAX_PLAYLIST_ENTRIES = 25
-MAX_RELATED_TRACKS = 10
-
-# cache configuration
-VIDEO_INFO_CACHE_TTL = 30 * 60  # 30 minutes
-VIDEO_INFO_CACHE_MAXSIZE = 500
-RELATED_TRACKS_CACHE_TTL = 15 * 60  # 15 minutes
-RELATED_TRACKS_CACHE_MAXSIZE = 200
-
-
 YTDL_OPTIONS: dict[str, Any] = {
     "nocheckcertificate": True,
     "ignoreerrors": False,
@@ -40,11 +18,11 @@ YTDL_OPTIONS: dict[str, Any] = {
     "format": "bestaudio[ext=webm]/bestaudio[acodec=opus]/bestaudio[ext=m4a]/bestaudio/best/b",
     "restrictfilenames": True,
     # "source_address": "0.0.0.0",
-    "playlist_items": f"1-{MAX_PLAYLIST_ENTRIES}",
+    "playlist_items": f"1-{Config.get('MAX_PLAYLIST_ENTRIES', 100)}",
     "extract_flat": "in_playlist",
     # "lazy_playlist": True,
     "compat_opts": ["no-youtube-unavailable-videos"],
-    "playlistend": MAX_PLAYLIST_ENTRIES,
+    "playlistend": Config.get("MAX_PLAYLIST_ENTRIES", 100),
     "playlistrandom": True,
     "extractor_args": {
         "youtube": {

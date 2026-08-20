@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from quart import Quart
 
+from .auth import auth_manager
 from .extensions import asc
 from .routes import register_all_routes
 from .utils.handlers import create_error_response
@@ -49,9 +50,10 @@ def create_app() -> Quart:
     app.secret_key = _resolve_secret_key()
     app.config.update(
         TEMPLATES_AUTO_RELOAD=True,
-        SESSION_COOKIE_SAMESITE="None",
-        SESSION_COOKIE_SECURE=True,
-        SESSION_COOKIE_HTTPONLY=False,
+        SESSION_COOKIE_NAME="pylive_session",
+        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_SECURE=False,
+        SESSION_COOKIE_HTTPONLY=True,
     )
 
     app.register_error_handler(404, not_found_error)
@@ -61,6 +63,9 @@ def create_app() -> Quart:
 
     @app.before_serving
     async def startup():
+        logger.info("initializing authentication manager")
+        await auth_manager.initialize()
+
         logger.info("starting audio stream controller")
         loop = asyncio.get_running_loop()
 

@@ -12,7 +12,9 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 from yt_dlp import YoutubeDL
 
-from .constants import MAX_DURATION_SECONDS, MAX_RELATED_TRACKS, YTDL_OPTIONS
+from src.config import Config
+
+from .constants import YTDL_OPTIONS
 from .errors import VideoIsUnavailableError
 from .utils.general import (
     get_and_cast,
@@ -32,6 +34,8 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+MAX_RELATED_TRACKS = Config.get("MAX_RELATED_TRACKS", 10)
+MAX_DURATION_SECONDS = Config.get("MAX_DURATION_SECONDS", 480)
 
 
 def _sync_extract_info(url: str, process: bool) -> Mapping[str, Any] | None:

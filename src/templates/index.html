@@ -71,6 +71,33 @@
                         <span class="live-dot"></span>
                         <span x-text="$store.player.sseStatus.toUpperCase()">OFFLINE</span>
                     </div>
+                    <div class="auth-masthead-group">
+                        <template x-if="!$store.auth.isAuthenticated">
+                            <button class="auth-btn auth-btn--accent"
+                                    @click="$store.auth.openLoginModal()"
+                                    aria-label="Login">[ LOGIN ]</button>
+                        </template>
+                        <template x-if="$store.auth.isAuthenticated">
+                            <div class="auth-masthead-group">
+                                <span class="auth-user-badge">
+                                    <span class="auth-role-tag"
+                                          x-text="`[${$store.auth.user.role.toUpperCase()}]`"></span>
+                                    <span x-text="$store.auth.user.username"></span>
+                                </span>
+                                <template x-if="$store.auth.isAdmin">
+                                    <button class="auth-btn"
+                                            @click="$store.auth.openUserMgmtModal()"
+                                            title="Manage Users & Permissions"
+                                            aria-label="Manage Users">USERS</button>
+                                </template>
+                                <button class="auth-btn"
+                                        @click="$store.auth.openChangePasswordModal()"
+                                        title="Change Password"
+                                        aria-label="Change Password">KEY</button>
+                                <button class="auth-btn" @click="$store.auth.logout()" aria-label="Logout">LOGOUT</button>
+                            </div>
+                        </template>
+                    </div>
                 </div>
             </header>
             <section class="nowplaying-section" aria-label="Current track">
@@ -303,6 +330,270 @@
                 </div>
             </section>
         </div>
+        <div class="modal-backdrop"
+             x-show="$store.auth.isLoginModalOpen"
+             x-transition.opacity
+             @keydown.escape.window="$store.auth.closeLoginModal()"
+             style="display: none">
+            <div class="modal-container" @click.away="$store.auth.closeLoginModal()">
+                <div class="modal-header">
+                    <span class="modal-title">[ AUTHENTICATION // LOGIN ]</span>
+                    <button class="modal-close-btn" @click="$store.auth.closeLoginModal()">✕</button>
+                </div>
+                <form @submit.prevent="$store.auth.login()">
+                    <div class="modal-body">
+                        <div class="modal-form-group">
+                            <label class="modal-label">USERNAME</label>
+                            <input type="text"
+                                   class="modal-input"
+                                   x-model="$store.auth.loginForm.username"
+                                   placeholder="Enter username"
+                                   required
+                                   autocomplete="username"
+                                   autofocus>
+                        </div>
+                        <div class="modal-form-group">
+                            <label class="modal-label">PASSWORD</label>
+                            <input type="password"
+                                   class="modal-input"
+                                   x-model="$store.auth.loginForm.password"
+                                   placeholder="Enter password"
+                                   required
+                                   autocomplete="current-password">
+                        </div>
+                        <template x-if="$store.auth.loginForm.error">
+                            <div class="toast-item toast-item--error" style="font-size: 0.72rem;">
+                                <span x-text="$store.auth.loginForm.error"></span>
+                            </div>
+                        </template>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button"
+                                class="modal-btn-cancel"
+                                @click="$store.auth.closeLoginModal()">CANCEL</button>
+                        <button type="submit"
+                                class="modal-btn-submit"
+                                :disabled="$store.auth.loginForm.isSubmitting">
+                            <span x-text="$store.auth.loginForm.isSubmitting ? 'AUTHENTICATING...' : 'LOGIN'"></span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <div class="modal-backdrop"
+             x-show="$store.auth.isChangePasswordModalOpen"
+             x-transition.opacity
+             @keydown.escape.window="$store.auth.closeChangePasswordModal()"
+             style="display: none">
+            <div class="modal-container"
+                 @click.away="$store.auth.closeChangePasswordModal()">
+                <div class="modal-header">
+                    <span class="modal-title">[ SECURITY // CHANGE PASSWORD ]</span>
+                    <button class="modal-close-btn"
+                            @click="$store.auth.closeChangePasswordModal()">✕</button>
+                </div>
+                <form @submit.prevent="$store.auth.changePassword()">
+                    <div class="modal-body">
+                        <div class="modal-form-group">
+                            <label class="modal-label">CURRENT PASSWORD</label>
+                            <input type="password"
+                                   class="modal-input"
+                                   x-model="$store.auth.changePasswordForm.currentPassword"
+                                   placeholder="Current password"
+                                   required
+                                   autocomplete="current-password">
+                        </div>
+                        <div class="modal-form-group">
+                            <label class="modal-label">NEW PASSWORD (MIN 6 CHARS)</label>
+                            <input type="password"
+                                   class="modal-input"
+                                   x-model="$store.auth.changePasswordForm.newPassword"
+                                   placeholder="New password"
+                                   required
+                                   autocomplete="new-password">
+                        </div>
+                        <div class="modal-form-group">
+                            <label class="modal-label">CONFIRM NEW PASSWORD</label>
+                            <input type="password"
+                                   class="modal-input"
+                                   x-model="$store.auth.changePasswordForm.confirmPassword"
+                                   placeholder="Confirm new password"
+                                   required
+                                   autocomplete="new-password">
+                        </div>
+                        <template x-if="$store.auth.changePasswordForm.error">
+                            <div class="toast-item toast-item--error" style="font-size: 0.72rem;">
+                                <span x-text="$store.auth.changePasswordForm.error"></span>
+                            </div>
+                        </template>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button"
+                                class="modal-btn-cancel"
+                                @click="$store.auth.closeChangePasswordModal()">CANCEL</button>
+                        <button type="submit"
+                                class="modal-btn-submit"
+                                :disabled="$store.auth.changePasswordForm.isSubmitting">
+                            <span x-text="$store.auth.changePasswordForm.isSubmitting ? 'SAVING...' : 'UPDATE PASSWORD'"></span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <div class="modal-backdrop"
+             x-show="$store.auth.isResetPasswordModalOpen"
+             x-transition.opacity
+             @keydown.escape.window="$store.auth.closeResetPasswordModal()"
+             style="display: none">
+            <div class="modal-container"
+                 @click.away="$store.auth.closeResetPasswordModal()">
+                <div class="modal-header">
+                    <span class="modal-title"
+                          x-text="`[ RESET PASSWORD // ${$store.auth.resetPasswordForm.username} ]`"></span>
+                    <button class="modal-close-btn"
+                            @click="$store.auth.closeResetPasswordModal()">✕</button>
+                </div>
+                <form @submit.prevent="$store.auth.adminResetPassword()">
+                    <div class="modal-body">
+                        <div class="modal-form-group">
+                            <label class="modal-label">NEW PASSWORD (MIN 6 CHARS)</label>
+                            <input type="password"
+                                   class="modal-input"
+                                   x-model="$store.auth.resetPasswordForm.newPassword"
+                                   placeholder="Enter new password"
+                                   required>
+                        </div>
+                        <template x-if="$store.auth.resetPasswordForm.error">
+                            <div class="toast-item toast-item--error" style="font-size: 0.72rem;">
+                                <span x-text="$store.auth.resetPasswordForm.error"></span>
+                            </div>
+                        </template>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button"
+                                class="modal-btn-cancel"
+                                @click="$store.auth.closeResetPasswordModal()">CANCEL</button>
+                        <button type="submit"
+                                class="modal-btn-submit"
+                                :disabled="$store.auth.resetPasswordForm.isSubmitting">RESET PASSWORD</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <div class="modal-backdrop"
+             x-show="$store.auth.isUserMgmtModalOpen"
+             x-transition.opacity
+             @keydown.escape.window="$store.auth.closeUserMgmtModal()"
+             style="display: none">
+            <div class="modal-container modal-container--large"
+                 @click.away="$store.auth.closeUserMgmtModal()">
+                <div class="modal-header">
+                    <span class="modal-title">[ ADMIN // USER &amp; PERMISSION MANAGEMENT ]</span>
+                    <button class="modal-close-btn" @click="$store.auth.closeUserMgmtModal()">✕</button>
+                </div>
+                <div class="modal-body">
+                    <!-- Create User Box -->
+                    <div class="create-user-section">
+                        <span class="modal-label" style="color: var(--accent-primary);">+ CREATE NEW USER</span>
+                        <form @submit.prevent="$store.auth.adminCreateUser()">
+                            <div class="create-user-grid">
+                                <div class="modal-form-group">
+                                    <label class="modal-label">USERNAME</label>
+                                    <input type="text"
+                                           class="modal-input"
+                                           x-model="$store.auth.createUserForm.username"
+                                           placeholder="e.g. dj_fox"
+                                           required>
+                                </div>
+                                <div class="modal-form-group">
+                                    <label class="modal-label">PASSWORD</label>
+                                    <input type="password"
+                                           class="modal-input"
+                                           x-model="$store.auth.createUserForm.password"
+                                           placeholder="Min 6 characters"
+                                           required>
+                                </div>
+                                <div>
+                                    <button type="submit"
+                                            class="modal-btn-submit"
+                                            :disabled="$store.auth.createUserForm.isSubmitting"
+                                            style="height: 38px">ADD USER</button>
+                                </div>
+                            </div>
+                            <template x-if="$store.auth.createUserForm.error">
+                                <div class="toast-item toast-item--error"
+                                     style="font-size: 0.72rem;
+                                            margin-top: 8px">
+                                    <span x-text="$store.auth.createUserForm.error"></span>
+                                </div>
+                            </template>
+                        </form>
+                    </div>
+                    <!-- User Table -->
+                    <div class="user-table-wrap">
+                        <table class="user-table">
+                            <thead>
+                                <tr>
+                                    <th class="user-table-th">USER</th>
+                                    <th class="user-table-th">ROLE</th>
+                                    <th class="user-table-th">PERMISSIONS</th>
+                                    <th class="user-table-th" style="text-align: right;">ACTIONS</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="user in $store.auth.adminUsersList" :key="user.username">
+                                    <tr class="user-table-row">
+                                        <td class="user-table-td"
+                                            style="font-weight: 600;
+                                                   font-family: var(--font-mono)"
+                                            x-text="user.username"></td>
+                                        <td class="user-table-td">
+                                            <span class="tracklist-tag"
+                                                  :style="user.role === 'admin' ? 'border-color: var(--accent-primary); color: var(--accent-primary);' : ''"
+                                                  x-text="user.role.toUpperCase()"></span>
+                                        </td>
+                                        <td class="user-table-td">
+                                            <template x-if="user.role === 'admin'">
+                                                <span style="font-family: var(--font-mono);
+                                                             font-size: 0.72rem;
+                                                             color: var(--accent-primary)">[ ALL PERMISSIONS // WILDCARD ]</span>
+                                            </template>
+                                            <template x-if="user.role !== 'admin'">
+                                                <div class="perm-checkbox-group">
+                                                    <template x-for="perm in $store.auth.availablePermissions" :key="perm">
+                                                        <label class="perm-checkbox-label">
+                                                            <input type="checkbox"
+                                                                   :checked="user.permissions && user.permissions.includes(perm)"
+                                                                   @change="$store.auth.adminTogglePermission(user, perm)">
+                                                            <span x-text="perm"></span>
+                                                        </label>
+                                                    </template>
+                                                </div>
+                                            </template>
+                                        </td>
+                                        <td class="user-table-td" style="text-align: right;">
+                                            <div style="display: inline-flex; gap: 6px;">
+                                                <button class="btn-action-sm"
+                                                        @click="$store.auth.openResetPasswordModal(user.username)"
+                                                        title="Reset Password">RESET PW</button>
+                                                <template x-if="user.username !== 'admin'">
+                                                    <button class="btn-danger-sm"
+                                                            @click="$store.auth.adminDeleteUser(user.username)"
+                                                            title="Delete User">DELETE</button>
+                                                </template>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn-cancel" @click="$store.auth.closeUserMgmtModal()">CLOSE</button>
+                </div>
+            </div>
+        </div>
         <div class="toast-container" aria-live="polite">
             <template x-for="toast in $store.player.toasts" :key="toast.id">
                 <div class="toast-item"
@@ -318,7 +609,7 @@
             </template>
         </div>
         {# djlint:off #}  <script id="initial-state" type="application/json">
-            {{  { "np": np, "queue": queue, "auto_queue": auto_queue } | tojson  }}
+            {{  { "np": np, "queue": queue, "auto_queue": auto_queue, "user": user } | tojson  }}
         </script>  {# djlint:on #}
     </body>
 </html>

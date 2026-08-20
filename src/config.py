@@ -82,6 +82,86 @@ class ConfigLoader(BaseConfigLoader[ConfigT]):
             const="DEBUG",
             help="Enable debug mode, short for --log-level=DEBUG",
         )
+        queue_args = parser.add_argument_group("Internal Size Limits")
+        queue_args.add_argument(
+            "--queue-max-size",
+            dest="QUEUE_MAX_SIZE",
+            type=int,
+            default=50,
+            help="Maximum number of tracks in the queue",
+        )
+        queue_args.add_argument(
+            "--track-history-size",
+            dest="TRACK_HISTORY_SIZE",
+            type=int,
+            default=50,
+            help="Maximum number of tracks in the history",
+        )
+        queue_args.add_argument(
+            "--max-sse-connections",
+            dest="MAX_SSE_CONNECTIONS",
+            type=int,
+            default=1000,
+            help="Maximum number of concurrent SSE connections",
+        )
+        extractor_args = parser.add_argument_group("Extractor Options")
+        extractor_args.add_argument(
+            "--max-playlist-entries",
+            dest="MAX_PLAYLIST_ENTRIES",
+            type=int,
+            default=25,
+            help="Maximum number of entries to extract from a playlist",
+        )
+        extractor_args.add_argument(
+            "--max-related-tracks",
+            dest="MAX_RELATED_TRACKS",
+            type=int,
+            default=10,
+            help="Maximum number of related tracks to extract",
+        )
+        extractor_args.add_argument(
+            "--video-info-cache-ttl",
+            dest="VIDEO_INFO_CACHE_TTL",
+            type=int,
+            default=30 * 60,
+            help="Time-to-live (TTL) for video info cache in seconds",
+        )
+        extractor_args.add_argument(
+            "--video-info-cache-maxsize",
+            dest="VIDEO_INFO_CACHE_MAXSIZE",
+            type=int,
+            default=500,
+            help="Maximum size of the video info cache",
+        )
+        extractor_args.add_argument(
+            "--related-tracks-cache-ttl",
+            dest="RELATED_TRACKS_CACHE_TTL",
+            type=int,
+            default=15 * 60,
+            help="Time-to-live (TTL) for related tracks cache in seconds",
+        )
+        extractor_args.add_argument(
+            "--related-tracks-cache-maxsize",
+            dest="RELATED_TRACKS_CACHE_MAXSIZE",
+            type=int,
+            default=200,
+            help="Maximum size of the related tracks cache",
+        )
+        audio_args = parser.add_argument_group("Audio Streaming Options")
+        audio_args.add_argument(
+            "--audio-buffer-size",
+            dest="AUDIO_BUFFER_SIZE",
+            type=int,
+            default=4096,
+            help="Size of the audio buffer in bytes",
+        )
+        audio_args.add_argument(
+            "--poll-interval",
+            dest="POLL_INTERVAL",
+            type=float,
+            default=0.1,
+            help="Interval in seconds between FFmpeg stdin writes",
+        )
 
         args, _ = parser.parse_known_args()
         for key, value in vars(args).items():
