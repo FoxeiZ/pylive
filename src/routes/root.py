@@ -23,11 +23,21 @@ bp = Blueprint("root", __name__)
 
 
 @bp.route("/")
-async def index():
+async def new_page():
     try:
         if not asc:
-            return await render_template("stream.html", np={}, queue=[])
-        return await render_template("stream.html", np=asc.now_playing, queue=asc.queue)
+            return await render_template(
+                "index.html",
+                np={},
+                queue=[],
+                auto_queue=[],
+            )
+        return await render_template(
+            "index.html",
+            np=asc.now_playing or {},
+            queue=asc.queue,
+            auto_queue=asc.auto_queue,
+        )
 
     except Exception as e:
         logger.error(f"error rendering index page: {e}")

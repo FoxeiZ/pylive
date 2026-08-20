@@ -22,7 +22,7 @@ MAX_DURATION_SECONDS = 8 * 60  # 8 minutes (480 seconds)
 
 # playlist and related tracks limits
 MAX_PLAYLIST_ENTRIES = 25
-MAX_RELATED_TRACKS = 25
+MAX_RELATED_TRACKS = 10
 
 # cache configuration
 VIDEO_INFO_CACHE_TTL = 30 * 60  # 30 minutes

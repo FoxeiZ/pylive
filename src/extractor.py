@@ -21,7 +21,7 @@ from .utils.general import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping
+    from collections.abc import Mapping
     from typing import Any, Literal
 
     from .models.extract import (
@@ -195,45 +195,17 @@ async def extract_video_info(
 
 async def get_related_tracks(
     video_info: BaseExtractModel,
+    limit: int = MAX_RELATED_TRACKS,
 ) -> Sequence[BaseExtractModel]:
-    result = await get_youtube_music_related_tracks(video_info.get("id", ""))
+    result = await get_youtube_music_related_tracks(
+        video_info.get("id", ""),
+        limit=limit,
+    )
     if result:
         return result
 
     logger.info("Falling back to standard YouTube related tracks")
-    return await get_youtube_related_tracks(video_info)
-
-
-def _process_related_entries(
-    entries: Iterable[Mapping[str, Any]],
-    parser: Callable[[Mapping[str, Any]], BaseExtractModel | None],
-    current_track_id: str | None,
-) -> list[BaseExtractModel]:
-    related_tracks: list[BaseExtractModel] = []
-    for item in entries:
-        if len(related_tracks) >= MAX_RELATED_TRACKS:
-            break
-        if not item:
-            continue
-
-        try:
-            track_info = parser(item)
-            if not track_info:
-                continue
-
-            # skip if the track is too long or is the current track
-            if is_video_too_long(track_info):
-                continue
-            if track_info.get("id") == current_track_id:
-                continue
-
-            related_tracks.append(track_info)
-        except (TypeError, KeyError) as e:
-            logger.warning(f"error processing related track item: {e}")
-            if item and item.get("url"):
-                logger.warning(f"private or unavailable video: {item.get('url')}")
-
-    return related_tracks
+    return await get_youtube_related_tracks(video_info, limit=limit)
 
 
 def _parser_youtube_related_tracks(item: Mapping[str, Any]) -> BaseExtractModel | None:
@@ -304,6 +276,7 @@ def _parser_youtube_related_tracks(item: Mapping[str, Any]) -> BaseExtractModel 
 
 async def get_youtube_related_tracks(
     video_info: BaseExtractModel,
+    limit: int = MAX_RELATED_TRACKS,
 ) -> Sequence[BaseExtractModel]:
     current_track_id = video_info.get("id", None)
     if not current_track_id:
@@ -359,6 +332,11 @@ async def get_youtube_related_tracks(
 
         related_tracks: list[BaseExtractModel] = []
         for item in secondary_results:
+            if len(related_tracks) >= limit:
+                break
+            if not item:
+                continue
+
             parsed = _parser_youtube_related_tracks(item)
             if parsed:
                 logger.info(f"related track found: {parsed}")
@@ -416,6 +394,7 @@ def _parser_youtube_music_related_tracks(
 
 async def get_youtube_music_related_tracks(
     current_track_id: str,
+    limit: int = MAX_RELATED_TRACKS,
 ) -> Sequence[BaseExtractModel]:
     body = {
         "context": {
@@ -476,6 +455,11 @@ async def get_youtube_music_related_tracks(
 
         related_tracks: list[BaseExtractModel] = []
         for section in sections:
+            if len(related_tracks) >= limit:
+                break
+            if not section:
+                continue
+
             parsed = _parser_youtube_music_related_tracks(section)
             if parsed:
                 logger.info(f"related track found: {parsed}")

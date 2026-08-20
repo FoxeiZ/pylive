@@ -1,8 +1,4 @@
 {
-    "python.analysis.typeCheckingMode": "off",
-    "python.analysis.ignore": [
-        "**"
-    ],
     "ruff.organizeImports": true,
     "ruff.lint.enable": true,
     "editor.codeActionsOnSave": {
@@ -22,6 +18,7 @@
         "H031", // Consider adding meta keywords
         "H030", // Consider adding a meta description
         "H006", // Img tag should have height and width attributes
+        "H021", // Inline styles should be avoided.
     ],
     "djlint.profile": "handlebars",
     "[javascript]": {

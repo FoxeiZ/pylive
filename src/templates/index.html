@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{{ np.get('title', 'PyLive Stream') if np else 'PyLive Stream' }} - PyLive</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+              rel="stylesheet">
+        <link rel="stylesheet"
+              href="{{ url_for('static', filename='styles/base.css') }}">
+        <script type="module"
+                src="{{ url_for('static', filename='scripts/stores.js') }}"></script>
+    </head>
+    <body x-data="audioDeck">
+        <audio id="audio-stream-player"
+               preload="none"
+               aria-label="Live audio stream"></audio>
+        <div class="console-container">
+            <header class="console-masthead">
+                <div class="brand-section">
+                    <span class="brand-code">BUY ME MORE RAM PLES //</span>
+                    <span class="brand-badge">16GB IS NOT ENUOGUH EUWWWW</span>
+                </div>
+                <div class="masthead-right">
+                    <div class="volume-control">
+                        <button class="volume-btn"
+                                @click="$store.player.toggleMute()"
+                                :aria-label="$store.player.isMuted ? 'Unmute' : 'Mute'">
+                            <svg x-show="!$store.player.isMuted && $store.player.volume > 0"
+                                 width="15"
+                                 height="15"
+                                 viewBox="0 0 24 24"
+                                 fill="none"
+                                 stroke="currentColor"
+                                 stroke-width="2"
+                                 stroke-linecap="round"
+                                 stroke-linejoin="round">
+                                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                                <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                            </svg>
+                            <svg x-show="$store.player.isMuted || $store.player.volume === 0"
+                                 width="15"
+                                 height="15"
+                                 viewBox="0 0 24 24"
+                                 fill="none"
+                                 stroke="currentColor"
+                                 stroke-width="2"
+                                 stroke-linecap="round"
+                                 stroke-linejoin="round"
+                                 style="display: none">
+                                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                                <line x1="23" y1="9" x2="17" y2="15" />
+                                <line x1="17" y1="9" x2="23" y2="15" />
+                            </svg>
+                        </button>
+                        <input type="range"
+                               min="0"
+                               max="1"
+                               step="0.01"
+                               :value="$store.player.volume"
+                               @input="$store.player.setVolume($event.target.value)"
+                               class="volume-range"
+                               aria-label="Volume control">
+                    </div>
+                    <div class="live-indicator"
+                         :class="{ 'live-indicator--connected': $store.player.sseStatus === 'connected', 'live-indicator--connecting': $store.player.sseStatus === 'connecting', 'live-indicator--disconnected': $store.player.sseStatus === 'disconnected' }"
+                         role="status"
+                         aria-live="polite">
+                        <span class="live-dot"></span>
+                        <span x-text="$store.player.sseStatus.toUpperCase()">OFFLINE</span>
+                    </div>
+                </div>
+            </header>
+            <section class="nowplaying-section" aria-label="Current track">
+                <span class="nowplaying-label">NOW BROADCASTING</span>
+                <a :href="$store.player.nowPlaying.webpage_url || '#'"
+                   class="nowplaying-title"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   x-text="$store.player.nowPlaying.title || 'Waiting for stream...'">Waiting for stream...</a>
+                <a :href="$store.player.nowPlaying.channel_url || '#'"
+                   class="nowplaying-artist"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   x-text="$store.player.nowPlaying.channel || 'Unknown'">Unknown</a>
+            </section>
+            <div class="visualizer-band"
+                 :class="{ 'visualizer-band--collapsed': !$store.player.showVisualizer }">
+                <canvas id="visualizer-canvas"
+                        class="waveform-canvas"
+                        aria-label="Audio frequency visualizer"></canvas>
+                <div class="waveform-idle-message"
+                     x-show="!$store.player.isPlaying"
+                     x-transition.opacity>
+                    <span>[ STREAM IDLE // CLICK `PLAY` TO START ]</span>
+                </div>
+            </div>
+            <div class="progress-rule">
+                <div class="progress-track-line" aria-hidden="true">
+                    <div class="progress-fill-line"
+                         :style="`width: ${$store.player.progressPercent}%`"></div>
+                </div>
+                <div class="progress-timestamps">
+                    <span x-text="`TIME: ${$store.player.formattedDuration}`">TIME: 00:00</span>
+                    <span x-text="`TOTAL: ${$store.player.formattedTotalDuration}`">TOTAL: 00:00</span>
+                </div>
+            </div>
+            <div class="editorial-controls-bar">
+                <div class="control-group-left">
+                    <button class="ctrl-btn ctrl-btn--play"
+                            @click="$store.player.togglePlay()"
+                            :aria-label="$store.player.isPlaying ? 'Pause stream' : 'Play stream'">
+                        <span x-show="!$store.player.isPlaying">PLAY</span>
+                        <span x-show="$store.player.isPlaying" style="display: none;">PAUSE</span>
+                    </button>
+                    <button class="ctrl-btn"
+                            @click="$store.player.voteSkip()"
+                            :disabled="$store.player.isSkippingTrack"
+                            title="Vote to skip current track"
+                            aria-label="Vote skip">
+                        <span>SKIP</span>
+                    </button>
+                </div>
+                <div class="control-group-right">
+                    <button class="ctrl-btn"
+                            :class="{ 'ctrl-btn--active': $store.player.showVisualizer }"
+                            @click="$store.player.toggleVisualizer()"
+                            aria-label="Toggle waveform visualizer">
+                        <span x-text="$store.player.showVisualizer ? 'WAVEFORM [ON]' : 'WAVEFORM [OFF]'">WAVEFORM [ON]</span>
+                    </button>
+                    <button class="ctrl-btn"
+                            :class="{ 'ctrl-btn--active': $store.player.isSettingsOpen }"
+                            @click="$store.player.isSettingsOpen = !$store.player.isSettingsOpen"
+                            aria-label="Toggle settings panel">
+                        <span x-text="$store.player.isSettingsOpen ? 'SETTINGS [OPEN]' : 'SETTINGS [CLOSE]'">SETTINGS [CLOSE]</span>
+                    </button>
+                </div>
+            </div>
+            <div class="settings-panel"
+                 x-data="visualizerPopover"
+                 x-show="$store.player.isSettingsOpen"
+                 x-transition:enter="transition ease-out duration-180"
+                 x-transition:enter-start="opacity-0 transform -translate-y-2"
+                 x-transition:enter-end="opacity-100 transform translate-y-0"
+                 x-transition:leave="transition ease-in duration-120"
+                 x-transition:leave-start="opacity-100 transform translate-y-0"
+                 x-transition:leave-end="opacity-0 transform -translate-y-2"
+                 style="display: none">
+                <div class="settings-header">
+                    <span class="settings-title">SETTINGS PANEL</span>
+                    <button class="ctrl-btn"
+                            style="padding: 4px 8px;
+                                   font-size: 0.68rem"
+                            @click="$store.player.isSettingsOpen = false">CLOSE</button>
+                </div>
+                <div class="settings-grid">
+                    <div class="settings-cell">
+                        <div class="settings-label-row">
+                            <span>RENDERING MODE</span>
+                        </div>
+                        <div class="settings-btn-group">
+                            <template x-for="mode in modes" :key="mode.id">
+                                <button class="settings-btn"
+                                        :class="{ 'settings-btn--active': $store.player.visualizerSettings.mode === mode.id }"
+                                        @click="$store.player.updateVisualizer('mode', mode.id)"
+                                        x-text="mode.label"></button>
+                            </template>
+                        </div>
+                    </div>
+                    <div class="settings-cell">
+                        <div class="settings-label-row">
+                            <span>ACCENT PALETTE</span>
+                        </div>
+                        <div class="settings-swatches">
+                            <template x-for="theme in themes" :key="theme.id">
+                                <button class="settings-swatch"
+                                        :style="`background-color: ${theme.color}`"
+                                        :class="{ 'settings-swatch--active': $store.player.visualizerSettings.theme === theme.id }"
+                                        @click="$store.player.updateVisualizer('theme', theme.id)"
+                                        :title="theme.label"
+                                        :aria-label="theme.label"></button>
+                            </template>
+                        </div>
+                    </div>
+                    <div class="settings-cell">
+                        <div class="settings-label-row">
+                            <span>BAR DENSITY</span>
+                            <span class="settings-val"
+                                  x-text="`${$store.player.visualizerSettings.barCount} BARS`"></span>
+                        </div>
+                        <input type="range"
+                               min="16"
+                               max="96"
+                               step="4"
+                               :value="$store.player.visualizerSettings.barCount"
+                               @input="$store.player.updateVisualizer('barCount', $event.target.value)"
+                               class="settings-slider"
+                               aria-label="Bar density">
+                    </div>
+                    <div class="settings-cell">
+                        <div class="settings-label-row">
+                            <span>SMOOTHING CONSTANT</span>
+                            <span class="settings-val"
+                                  x-text="$store.player.visualizerSettings.sensitivity"></span>
+                        </div>
+                        <input type="range"
+                               min="0.1"
+                               max="0.95"
+                               step="0.01"
+                               :value="$store.player.visualizerSettings.sensitivity"
+                               @input="$store.player.updateVisualizer('sensitivity', $event.target.value)"
+                               class="settings-slider"
+                               aria-label="Smoothing sensitivity">
+                    </div>
+                    <div class="settings-cell">
+                        <div class="settings-label-row">
+                            <span>GAIN MULTIPLIER</span>
+                            <span class="settings-val"
+                                  x-text="`${$store.player.visualizerSettings.multiplier}X`"></span>
+                        </div>
+                        <input type="range"
+                               min="0.4"
+                               max="2.5"
+                               step="0.1"
+                               :value="$store.player.visualizerSettings.multiplier"
+                               @input="$store.player.updateVisualizer('multiplier', $event.target.value)"
+                               class="settings-slider"
+                               aria-label="Gain multiplier">
+                    </div>
+                    <div class="settings-cell">
+                        <div class="settings-label-row">
+                            <span>MIN DECIBELS</span>
+                            <span class="settings-val"
+                                  x-text="`${$store.player.visualizerSettings.minDecibels} dB`"></span>
+                        </div>
+                        <input type="range"
+                               min="-100"
+                               max="-40"
+                               step="2"
+                               :value="$store.player.visualizerSettings.minDecibels"
+                               @input="$store.player.updateVisualizer('minDecibels', $event.target.value)"
+                               class="settings-slider"
+                               aria-label="Min decibels">
+                    </div>
+                    <div class="settings-cell">
+                        <div class="settings-label-row">
+                            <span>MAX DECIBELS</span>
+                            <span class="settings-val"
+                                  x-text="`${$store.player.visualizerSettings.maxDecibels} dB`"></span>
+                        </div>
+                        <input type="range"
+                               min="-50"
+                               max="-10"
+                               step="2"
+                               :value="$store.player.visualizerSettings.maxDecibels"
+                               @input="$store.player.updateVisualizer('maxDecibels', $event.target.value)"
+                               class="settings-slider"
+                               aria-label="Max decibels">
+                    </div>
+                    <div class="settings-cell">
+                        <div class="settings-label-row">
+                            <span>FPS CAP</span>
+                            <span class="settings-val"
+                                  x-text="`${$store.player.visualizerSettings.fps} FPS`"></span>
+                        </div>
+                        <input type="range"
+                               min="24"
+                               max="120"
+                               step="6"
+                               :value="$store.player.visualizerSettings.fps"
+                               @input="$store.player.updateVisualizer('fps', $event.target.value)"
+                               class="settings-slider"
+                               aria-label="FPS limit">
+                    </div>
+                </div>
+            </div>
+            <section class="tracklist-section"
+                     x-data="queueSection"
+                     aria-label="Playback tracklist">
+                <div class="tracklist-nav">
+                    <div class="tracklist-tabs">
+                        <button class="tab-link"
+                                :class="{ 'tab-link--active': $store.player.activeQueueTab === 'queue' }"
+                                @click="$store.player.setQueueTab('queue')">
+                            [ UP NEXT // <span x-text="String($store.player.queue.length).padStart(2, '0')">00</span> ]
+                        </button>
+                        <button class="tab-link"
+                                :class="{ 'tab-link--active': $store.player.activeQueueTab === 'autoplay' }"
+                                @click="$store.player.setQueueTab('autoplay')">
+                            [ AUTOPLAY RADIO // <span x-text="String($store.player.autoQueue.length).padStart(2, '0')">00</span> ]
+                        </button>
+                    </div>
+                    <div class="track-add-inline">
+                        <input type="url"
+                               x-model="$store.player.newTrackUrl"
+                               @keydown.enter="$store.player.addToQueue()"
+                               placeholder="Enter YouTube URL to queue..."
+                               class="input-editorial"
+                               aria-label="Queue track URL">
+                        <button class="btn-editorial-add"
+                                @click="$store.player.addToQueue()"
+                                :disabled="$store.player.isSubmittingTrack || !$store.player.newTrackUrl.trim()"
+                                aria-label="Submit track to queue">QUEUE</button>
+                    </div>
+                </div>
+                <table class="tracklist-table">
+                    <thead>
+                        <tr class="tracklist-header-row">
+                            <th class="tracklist-th tracklist-th--num">#</th>
+                            <th class="tracklist-th">TITLE</th>
+                            <th class="tracklist-th">ARTIST</th>
+                            <th class="tracklist-th tracklist-th--status">STATUS</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-if="$store.player.activeQueueTab === 'queue'">
+                            <template x-for="(track, index) in $store.player.queue"
+                                      :key="track.webpage_url + index">
+                                <tr class="tracklist-row">
+                                    <td class="tracklist-td tracklist-td--num"
+                                        x-text="`#${String(index + 1).padStart(2, '0')}`"></td>
+                                    <td class="tracklist-td">
+                                        <a :href="track.webpage_url || '#'"
+                                           class="tracklist-link-title"
+                                           target="_blank"
+                                           rel="noopener noreferrer"
+                                           x-text="track.title || 'Untitled Track'"></a>
+                                    </td>
+                                    <td class="tracklist-td">
+                                        <a :href="track.channel_url || '#'"
+                                           class="tracklist-link-artist"
+                                           target="_blank"
+                                           rel="noopener noreferrer"
+                                           x-text="track.channel || 'Unknown Artist'"></a>
+                                    </td>
+                                    <td class="tracklist-td" style="text-align: right;">
+                                        <span class="tracklist-tag">QUEUED</span>
+                                    </td>
+                                </tr>
+                            </template>
+                        </template>
+                        <template x-if="$store.player.activeQueueTab === 'autoplay'">
+                            <template x-for="(track, index) in $store.player.autoQueue"
+                                      :key="track.webpage_url + index">
+                                <tr class="tracklist-row">
+                                    <td class="tracklist-td tracklist-td--num"
+                                        x-text="`#${String(index + 1).padStart(2, '0')}`"></td>
+                                    <td class="tracklist-td">
+                                        <a :href="track.webpage_url || '#'"
+                                           class="tracklist-link-title"
+                                           target="_blank"
+                                           rel="noopener noreferrer"
+                                           x-text="track.title || 'Untitled Track'"></a>
+                                    </td>
+                                    <td class="tracklist-td">
+                                        <a :href="track.channel_url || '#'"
+                                           class="tracklist-link-artist"
+                                           target="_blank"
+                                           rel="noopener noreferrer"
+                                           x-text="track.channel || 'Unknown Artist'"></a>
+                                    </td>
+                                    <td class="tracklist-td" style="text-align: right;">
+                                        <span class="tracklist-tag">AUTOPLAY</span>
+                                    </td>
+                                </tr>
+                            </template>
+                        </template>
+                    </tbody>
+                </table>
+                <div class="tracklist-empty"
+                     x-show="($store.player.activeQueueTab === 'queue' && $store.player.queue.length === 0) || ($store.player.activeQueueTab === 'autoplay' && $store.player.autoQueue.length === 0)">
+                    <span x-text="$store.player.activeQueueTab === 'queue' ? '// NO USER TRACKS IN QUEUE — SUBMIT A URL ABOVE //' : '// AUTOPLAY QUEUE GENERATING ON PLAYBACK //'"></span>
+                </div>
+            </section>
+        </div>
+        <div class="toast-container" aria-live="polite">
+            <template x-for="toast in $store.player.toasts" :key="toast.id">
+                <div class="toast-item"
+                     :class="{ 'toast-item--success': toast.type === 'success', 'toast-item--warning': toast.type === 'warning', 'toast-item--error': toast.type === 'error' }"
+                     x-transition:enter="transition ease-out duration-150"
+                     x-transition:enter-start="opacity-0 transform translate-y-1"
+                     x-transition:enter-end="opacity-100 transform translate-y-0"
+                     x-transition:leave="transition ease-in duration-100"
+                     x-transition:leave-start="opacity-100 transform translate-y-0"
+                     x-transition:leave-end="opacity-0 transform translate-y-1">
+                    <span x-text="`[ ${toast.text.toUpperCase()} ]`"></span>
+                </div>
+            </template>
+        </div>
+        {# djlint:off #}  <script id="initial-state" type="application/json">
+            {{  { "np": np, "queue": queue, "auto_queue": auto_queue } | tojson  }}
+        </script>  {# djlint:on #}
+    </body>
+</html>
