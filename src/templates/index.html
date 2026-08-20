@@ -81,8 +81,8 @@
                             <div class="auth-masthead-group">
                                 <span class="auth-user-badge">
                                     <span class="auth-role-tag"
-                                          x-text="`[${$store.auth.user.role.toUpperCase()}]`"></span>
-                                    <span x-text="$store.auth.user.username"></span>
+                                          x-text="$store.auth.formattedRole"></span>
+                                    <span x-text="$store.auth.username"></span>
                                 </span>
                                 <template x-if="$store.auth.isAdmin">
                                     <button class="auth-btn"
@@ -393,6 +393,12 @@
                             @click="$store.auth.closeChangePasswordModal()">✕</button>
                 </div>
                 <form @submit.prevent="$store.auth.changePassword()">
+                    <input type="text"
+                           name="username"
+                           :value="$store.auth.username"
+                           autocomplete="username"
+                           style="display: none"
+                           aria-hidden="true">
                     <div class="modal-body">
                         <div class="modal-form-group">
                             <label class="modal-label">CURRENT PASSWORD</label>
@@ -454,6 +460,12 @@
                             @click="$store.auth.closeResetPasswordModal()">✕</button>
                 </div>
                 <form @submit.prevent="$store.auth.adminResetPassword()">
+                    <input type="text"
+                           name="username"
+                           :value="$store.auth.resetPasswordForm.username"
+                           autocomplete="username"
+                           style="display: none"
+                           aria-hidden="true">
                     <div class="modal-body">
                         <div class="modal-form-group">
                             <label class="modal-label">NEW PASSWORD (MIN 6 CHARS)</label>
@@ -461,7 +473,8 @@
                                    class="modal-input"
                                    x-model="$store.auth.resetPasswordForm.newPassword"
                                    placeholder="Enter new password"
-                                   required>
+                                   required
+                                   autocomplete="new-password">
                         </div>
                         <template x-if="$store.auth.resetPasswordForm.error">
                             <div class="toast-item toast-item--error" style="font-size: 0.72rem;">
@@ -503,7 +516,8 @@
                                            class="modal-input"
                                            x-model="$store.auth.createUserForm.username"
                                            placeholder="e.g. dj_fox"
-                                           required>
+                                           required
+                                           autocomplete="username">
                                 </div>
                                 <div class="modal-form-group">
                                     <label class="modal-label">PASSWORD</label>
@@ -511,7 +525,8 @@
                                            class="modal-input"
                                            x-model="$store.auth.createUserForm.password"
                                            placeholder="Min 6 characters"
-                                           required>
+                                           required
+                                           autocomplete="new-password">
                                 </div>
                                 <div>
                                     <button type="submit"

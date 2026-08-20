@@ -97,6 +97,18 @@ Alpine.store("auth", {
     return this.isAuthenticated && this.user && this.user.role === "admin";
   },
 
+  get username() {
+    return this.user ? this.user.username : "";
+  },
+
+  get role() {
+    return this.user ? this.user.role : "guest";
+  },
+
+  get formattedRole() {
+    return this.user && this.user.role ? `[${this.user.role.toUpperCase()}]` : "";
+  },
+
   openLoginModal() {
     this.loginForm.error = "";
     this.loginForm.username = "";
