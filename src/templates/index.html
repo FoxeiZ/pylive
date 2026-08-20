@@ -184,96 +184,24 @@
                             </template>
                         </div>
                     </div>
-                    <div class="settings-cell">
-                        <div class="settings-label-row">
-                            <span>BAR DENSITY</span>
-                            <span class="settings-val"
-                                  x-text="`${$store.player.visualizerSettings.barCount} BARS`"></span>
+                    <template x-for="item in $store.player.sliderConfigs" :key="item.key">
+                        <div class="settings-cell">
+                            <div class="settings-label-row">
+                                <span x-text="item.label"></span>
+                                <span class="settings-val"
+                                      x-text="$store.player.formatSettingValue ? $store.player.formatSettingValue(item) : (item.unit === 'X' ? `${$store.player.visualizerSettings[item.key]}X` : `${$store.player.visualizerSettings[item.key]}${item.unit ? ' ' + item.unit : ''}`)"></span>
+                            </div>
+                            <input type="range"
+                                   :min="item.min"
+                                   :max="item.max"
+                                   :step="item.step"
+                                   :value="$store.player.visualizerSettings[item.key]"
+                                   @input="$store.player.updateVisualizer(item.key, $event.target.value)"
+                                   class="settings-slider"
+                                   :aria-label="item.label"
+                                   :disabled="item.disabledIn && item.disabledIn.includes($store.player.visualizerSettings.mode)">
                         </div>
-                        <input type="range"
-                               min="16"
-                               max="96"
-                               step="4"
-                               :value="$store.player.visualizerSettings.barCount"
-                               @input="$store.player.updateVisualizer('barCount', $event.target.value)"
-                               class="settings-slider"
-                               aria-label="Bar density">
-                    </div>
-                    <div class="settings-cell">
-                        <div class="settings-label-row">
-                            <span>SMOOTHING CONSTANT</span>
-                            <span class="settings-val"
-                                  x-text="$store.player.visualizerSettings.sensitivity"></span>
-                        </div>
-                        <input type="range"
-                               min="0.1"
-                               max="0.95"
-                               step="0.01"
-                               :value="$store.player.visualizerSettings.sensitivity"
-                               @input="$store.player.updateVisualizer('sensitivity', $event.target.value)"
-                               class="settings-slider"
-                               aria-label="Smoothing sensitivity">
-                    </div>
-                    <div class="settings-cell">
-                        <div class="settings-label-row">
-                            <span>GAIN MULTIPLIER</span>
-                            <span class="settings-val"
-                                  x-text="`${$store.player.visualizerSettings.multiplier}X`"></span>
-                        </div>
-                        <input type="range"
-                               min="0.4"
-                               max="2.5"
-                               step="0.1"
-                               :value="$store.player.visualizerSettings.multiplier"
-                               @input="$store.player.updateVisualizer('multiplier', $event.target.value)"
-                               class="settings-slider"
-                               aria-label="Gain multiplier">
-                    </div>
-                    <div class="settings-cell">
-                        <div class="settings-label-row">
-                            <span>MIN DECIBELS</span>
-                            <span class="settings-val"
-                                  x-text="`${$store.player.visualizerSettings.minDecibels} dB`"></span>
-                        </div>
-                        <input type="range"
-                               min="-100"
-                               max="-40"
-                               step="2"
-                               :value="$store.player.visualizerSettings.minDecibels"
-                               @input="$store.player.updateVisualizer('minDecibels', $event.target.value)"
-                               class="settings-slider"
-                               aria-label="Min decibels">
-                    </div>
-                    <div class="settings-cell">
-                        <div class="settings-label-row">
-                            <span>MAX DECIBELS</span>
-                            <span class="settings-val"
-                                  x-text="`${$store.player.visualizerSettings.maxDecibels} dB`"></span>
-                        </div>
-                        <input type="range"
-                               min="-50"
-                               max="-10"
-                               step="2"
-                               :value="$store.player.visualizerSettings.maxDecibels"
-                               @input="$store.player.updateVisualizer('maxDecibels', $event.target.value)"
-                               class="settings-slider"
-                               aria-label="Max decibels">
-                    </div>
-                    <div class="settings-cell">
-                        <div class="settings-label-row">
-                            <span>FPS CAP</span>
-                            <span class="settings-val"
-                                  x-text="`${$store.player.visualizerSettings.fps} FPS`"></span>
-                        </div>
-                        <input type="range"
-                               min="24"
-                               max="120"
-                               step="6"
-                               :value="$store.player.visualizerSettings.fps"
-                               @input="$store.player.updateVisualizer('fps', $event.target.value)"
-                               class="settings-slider"
-                               aria-label="FPS limit">
-                    </div>
+                    </template>
                 </div>
             </div>
             <section class="tracklist-section"

@@ -76,6 +76,63 @@ Alpine.store("player", {
     multiplier: 1.0,
   },
 
+  sliderConfigs: [
+    {
+      key: "barCount",
+      label: "BAR DENSITY",
+      unit: "BARS",
+      min: 16,
+      max: 96,
+      step: 4,
+      disabledIn: ["waveform"],
+    },
+    {
+      key: "sensitivity",
+      label: "SMOOTHING CONSTANT",
+      unit: "",
+      min: 0.1,
+      max: 0.95,
+      step: 0.01,
+      disabledIn: ["waveform"],
+    },
+    {
+      key: "multiplier",
+      label: "GAIN MULTIPLIER",
+      unit: "X",
+      min: 0.4,
+      max: 2.5,
+      step: 0.1,
+      disabledIn: [],
+    },
+    {
+      key: "minDecibels",
+      label: "MIN DECIBELS",
+      unit: "dB",
+      min: -100,
+      max: -40,
+      step: 2,
+      disabledIn: ["waveform"],
+    },
+    {
+      key: "maxDecibels",
+      label: "MAX DECIBELS",
+      unit: "dB",
+      min: -50,
+      max: -10,
+      step: 2,
+      disabledIn: ["waveform"],
+    },
+    {
+      key: "fps",
+      label: "FPS CAP",
+      unit: "FPS",
+      min: 24,
+      max: 120,
+      step: 6,
+      disabledIn: [],
+    },
+  ],
+
   get formattedDuration() {
     return formatTime(this.currentDuration);
   },
@@ -89,6 +146,12 @@ Alpine.store("player", {
       return formatTime(this.nowPlaying.duration);
     }
     return "LIVE";
+  },
+
+  formatSettingValue(item) {
+    const val = this.visualizerSettings[item.key];
+    if (!item.unit) return `${val}`;
+    return item.unit === "X" ? `${val}X` : `${val} ${item.unit}`;
   },
 
   get progressPercent() {

@@ -498,6 +498,12 @@ body {
   cursor: pointer;
 }
 
+.settings-slider:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transition: opacity var(--transition-fast);
+}
+
 /* tracklist section */
 .tracklist-section {
   display: flex;
