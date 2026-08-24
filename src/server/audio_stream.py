@@ -752,6 +752,14 @@ class AudioStreamController:
         except Exception as e:
             logger.warning(f"failed to populate auto queue: {e}")
 
+    async def refresh_autoplay_queue(self) -> None:
+        if not self._now_playing:
+            logger.warning("no track currently playing; cannot refresh autoplay queue")
+            return
+
+        logger.info("refreshing autoplay queue with new related tracks")
+        await self._populate_auto_queue(self._now_playing)
+
     async def _process_track(
         self, track: BaseExtractModel | ProcessedExtractModel
     ) -> ProcessedExtractModel:

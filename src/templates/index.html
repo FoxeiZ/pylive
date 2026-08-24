@@ -78,23 +78,61 @@
                                     aria-label="Login">[ LOGIN ]</button>
                         </template>
                         <template x-if="$store.auth.isAuthenticated">
-                            <div class="auth-masthead-group">
-                                <span class="auth-user-badge">
-                                    <span class="auth-role-tag"
-                                          x-text="$store.auth.formattedRole"></span>
+                            <div class="auth-dropdown-wrapper"
+                                 x-data="{ open: false }"
+                                 @click.outside="open = false"
+                                 @keydown.escape.window="open = false">
+                                <button class="auth-user-badge auth-user-badge--btn"
+                                        @click="open = !open"
+                                        :class="{ 'auth-user-badge--active': open }"
+                                        aria-label="User profile menu"
+                                        :aria-expanded="open">
+                                    <span class="auth-role-tag" x-text="$store.auth.formattedRole"></span>
                                     <span x-text="$store.auth.username"></span>
-                                </span>
-                                <template x-if="$store.auth.isAdmin">
-                                    <button class="auth-btn"
-                                            @click="$store.auth.openUserMgmtModal()"
-                                            title="Manage Users & Permissions"
-                                            aria-label="Manage Users">USERS</button>
-                                </template>
-                                <button class="auth-btn"
-                                        @click="$store.auth.openChangePasswordModal()"
-                                        title="Change Password"
-                                        aria-label="Change Password">KEY</button>
-                                <button class="auth-btn" @click="$store.auth.logout()" aria-label="Logout">LOGOUT</button>
+                                    <svg width="10"
+                                         height="10"
+                                         viewBox="0 0 24 24"
+                                         fill="none"
+                                         stroke="currentColor"
+                                         stroke-width="2"
+                                         stroke-linecap="round"
+                                         stroke-linejoin="round"
+                                         :style="open ? 'transform: rotate(180deg);' : ''"
+                                         style="transition: transform 140ms ease;
+                                                margin-left: 2px">
+                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                    </svg>
+                                </button>
+                                <div class="auth-dropdown-menu"
+                                     x-show="open"
+                                     x-transition:enter="transition ease-out duration-140"
+                                     x-transition:enter-start="opacity-0 transform -translate-y-1"
+                                     x-transition:enter-end="opacity-100 transform translate-y-0"
+                                     x-transition:leave="transition ease-in duration-100"
+                                     x-transition:leave-start="opacity-100 transform translate-y-0"
+                                     x-transition:leave-end="opacity-0 transform -translate-y-1"
+                                     style="display: none">
+                                    <div class="auth-dropdown-header">
+                                        <span class="auth-dropdown-username" x-text="$store.auth.username"></span>
+                                        <span class="auth-dropdown-role"
+                                              x-text="`ROLE: ${$store.auth.role.toUpperCase()}`"></span>
+                                    </div>
+                                    <template x-if="$store.auth.isAdmin">
+                                        <button class="auth-dropdown-item"
+                                                @click="open = false; $store.auth.openUserMgmtModal()">
+                                            <span>Manage Users</span>
+                                        </button>
+                                    </template>
+                                    <button class="auth-dropdown-item"
+                                            @click="open = false; $store.auth.openChangePasswordModal()">
+                                        <span>Change Password</span>
+                                    </button>
+                                    <div class="auth-dropdown-divider"></div>
+                                    <button class="auth-dropdown-item auth-dropdown-item--danger"
+                                            @click="open = false; $store.auth.logout()">
+                                        <span style="color: var(--color-offline)">Logout</span>
+                                    </button>
+                                </div>
                             </div>
                         </template>
                     </div>
@@ -247,7 +285,8 @@
                             [ AUTOPLAY RADIO // <span x-text="String($store.player.autoQueue.length).padStart(2, '0')">00</span> ]
                         </button>
                     </div>
-                    <div class="track-add-inline">
+                    <div class="track-add-inline"
+                         x-show="$store.player.activeQueueTab === 'queue'">
                         <input type="url"
                                x-model="$store.player.newTrackUrl"
                                @keydown.enter="$store.player.addToQueue()"
@@ -258,6 +297,16 @@
                                 @click="$store.player.addToQueue()"
                                 :disabled="$store.player.isSubmittingTrack || !$store.player.newTrackUrl.trim()"
                                 aria-label="Submit track to queue">QUEUE</button>
+                    </div>
+                    <div class="track-autoplay-actions"
+                         x-show="$store.player.activeQueueTab === 'autoplay' && $store.auth.hasPermission('queue:autoplay_refresh')"
+                         style="display: none">
+                        <button class="btn-editorial-add"
+                                @click="$store.player.refreshAutoplayQueue()"
+                                :disabled="$store.player.isRefreshingAutoplay"
+                                aria-label="Refresh autoplay queue">
+                            <span x-text="$store.player.isRefreshingAutoplay ? 'REFRESHING...' : 'REFRESH AUTOPLAY'">REFRESH AUTOPLAY</span>
+                        </button>
                     </div>
                 </div>
                 <table class="tracklist-table">

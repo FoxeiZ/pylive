@@ -35,6 +35,7 @@ Alpine.store("auth", {
     "queue:skip_vote",
     "queue:skip_force",
     "queue:clear",
+    "queue:autoplay_refresh",
     "admin:manage_users",
   ],
 
@@ -420,6 +421,7 @@ Alpine.store("player", {
   newTrackUrl: "",
   isSubmittingTrack: false,
   isSkippingTrack: false,
+  isRefreshingAutoplay: false,
 
   // connectivity and notifications
   sseStatus: "connecting",
@@ -913,6 +915,42 @@ Alpine.store("player", {
       setTimeout(() => {
         this.isSkippingTrack = false;
       }, 1500);
+    }
+  },
+
+  async refreshAutoplayQueue() {
+    const authStore = Alpine.store("auth");
+    if (!authStore.hasPermission("queue:autoplay_refresh")) {
+      if (!authStore.isAuthenticated) {
+        this.addToast("Please login to refresh autoplay", "info");
+        authStore.openLoginModal();
+      } else {
+        this.addToast("Permission denied: queue:autoplay_refresh required", "error");
+      }
+      return;
+    }
+
+    if (this.isRefreshingAutoplay) return;
+    this.isRefreshingAutoplay = true;
+
+    try {
+      const res = await fetch("/queue/autoplay/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const data = await res.json();
+      if (res.ok && data.msg === "success") {
+        this.addToast("Autoplay queue refreshed", "success");
+        await this.fetchQueue();
+      } else {
+        this.addToast(data.msg || "Failed to refresh autoplay queue", "error");
+      }
+    } catch (err) {
+      console.error("Error refreshing autoplay queue", err);
+      this.addToast("Network error while refreshing autoplay", "error");
+    } finally {
+      this.isRefreshingAutoplay = false;
     }
   },
 

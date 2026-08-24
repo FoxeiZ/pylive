@@ -118,5 +118,14 @@ async def skip_current_track():
     return await create_response(message="Track skipped successfully")
 
 
+@bp.route("/autoplay/refresh", methods=["POST"])
+@require_permission(Permission.QUEUE_AUTOPLAY_REFRESH)
+@on_error_decorator("Failed to refresh autoplay queue")
+async def refresh_autoplay_queue():
+    logger.info("Refreshing autoplay queue")
+    await asc.refresh_autoplay_queue()
+    return await create_response(message="Autoplay queue refreshed successfully")
+
+
 def register_routes(app: Quart):
     app.register_blueprint(bp, url_prefix="/queue")
