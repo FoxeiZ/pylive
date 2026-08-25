@@ -1,25 +1,38 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import logging
 import os
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, TypedDict
+from typing import Any, TypedDict
 
 from dotenv import find_dotenv, load_dotenv
 
-if TYPE_CHECKING:
-    from typing import Any
+logger = logging.getLogger(__name__)
 
 
 class ConfigT(TypedDict):
     LOG_LEVEL: str
+    SUPABASE_URL: str
+    SUPABASE_KEY: str
+    REDIS_URL: str
+    UPSTASH_REDIS_REST_URL: str
+    UPSTASH_REDIS_REST_TOKEN: str
+    COBALT_API_URL: str
+    COBALT_API_KEY: str
+    PIPED_API_URL: str
+    DEFAULT_EXTRACTOR: str
+    STREAM_CACHE_TTL: int
+    QUEUE_MAX_SIZE: int
+    TRACK_HISTORY_SIZE: int
 
 
 class BaseConfigLoader[T: ConfigT](ABC):
-    _config: T
+    _config: dict[str, Any]
 
     def __init__(self) -> None:
-        self._config = self.get_defaults()
+        self._config = dict(self.get_defaults())
 
     @abstractmethod
     def get_defaults(self) -> T: ...
@@ -34,13 +47,12 @@ class ConfigLoader(BaseConfigLoader[ConfigT]):
             cls._instance = cls()
         return cls._instance
 
-    def __init__(self):
+    def __init__(self) -> None:
         if self._instance is not None:
             import warnings  # noqa: PLC0415
 
             warnings.warn(
-                "ConfigSingleton instance already exists. Use get_instance() to access it. "
-                "Making a new instance is probably not what you want.",
+                "ConfigSingleton instance already exists. Use get_instance() to access it.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -56,23 +68,30 @@ class ConfigLoader(BaseConfigLoader[ConfigT]):
         self._load_from_env()
 
     def get_defaults(self) -> ConfigT:
-        """Get the default configuration values."""
+        """get default configuration values."""
         return {
             "LOG_LEVEL": "INFO",
+            "SUPABASE_URL": "",
+            "SUPABASE_KEY": "",
+            "REDIS_URL": "redis://localhost:6379",
+            "UPSTASH_REDIS_REST_URL": "",
+            "UPSTASH_REDIS_REST_TOKEN": "",
+            "COBALT_API_URL": "https://api.cobalt.tools",
+            "COBALT_API_KEY": "",
+            "PIPED_API_URL": "https://pipedapi.kavin.rocks",
+            "DEFAULT_EXTRACTOR": "cobalt",
+            "STREAM_CACHE_TTL": 7200,
+            "QUEUE_MAX_SIZE": 50,
+            "TRACK_HISTORY_SIZE": 50,
         }
 
-    def _parse_args(self):
-        parser = argparse.ArgumentParser(add_help=True, exit_on_error=True)
-        # parser.add_argument(
-        #     "--webhook-url",
-        #     dest="WEBHOOK_URL",
-        #     help="Webhook URL for notifications",
-        # )
+    def _parse_args(self) -> None:
+        parser = argparse.ArgumentParser(add_help=True, exit_on_error=False)
         parser.add_argument(
             "--log-level",
             dest="LOG_LEVEL",
             choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-            default="INFO",
+            default=None,
             help="Set the logging level",
         )
         parser.add_argument(
@@ -80,111 +99,43 @@ class ConfigLoader(BaseConfigLoader[ConfigT]):
             dest="LOG_LEVEL",
             action="store_const",
             const="DEBUG",
-            help="Enable debug mode, short for --log-level=DEBUG",
+            help="Enable debug mode",
         )
-        queue_args = parser.add_argument_group("Internal Size Limits")
-        queue_args.add_argument(
-            "--queue-max-size",
-            dest="QUEUE_MAX_SIZE",
-            type=int,
-            default=50,
-            help="Maximum number of tracks in the queue",
+        parser.add_argument(
+            "--redis-url",
+            dest="REDIS_URL",
+            default=None,
+            help="Redis connection URL",
         )
-        queue_args.add_argument(
-            "--track-history-size",
-            dest="TRACK_HISTORY_SIZE",
-            type=int,
-            default=50,
-            help="Maximum number of tracks in the history",
-        )
-        queue_args.add_argument(
-            "--max-sse-connections",
-            dest="MAX_SSE_CONNECTIONS",
-            type=int,
-            default=1000,
-            help="Maximum number of concurrent SSE connections",
-        )
-        extractor_args = parser.add_argument_group("Extractor Options")
-        extractor_args.add_argument(
-            "--max-playlist-entries",
-            dest="MAX_PLAYLIST_ENTRIES",
-            type=int,
-            default=25,
-            help="Maximum number of entries to extract from a playlist",
-        )
-        extractor_args.add_argument(
-            "--max-related-tracks",
-            dest="MAX_RELATED_TRACKS",
-            type=int,
-            default=10,
-            help="Maximum number of related tracks to extract",
-        )
-        extractor_args.add_argument(
-            "--video-info-cache-ttl",
-            dest="VIDEO_INFO_CACHE_TTL",
-            type=int,
-            default=30 * 60,
-            help="Time-to-live (TTL) for video info cache in seconds",
-        )
-        extractor_args.add_argument(
-            "--video-info-cache-maxsize",
-            dest="VIDEO_INFO_CACHE_MAXSIZE",
-            type=int,
-            default=500,
-            help="Maximum size of the video info cache",
-        )
-        extractor_args.add_argument(
-            "--related-tracks-cache-ttl",
-            dest="RELATED_TRACKS_CACHE_TTL",
-            type=int,
-            default=15 * 60,
-            help="Time-to-live (TTL) for related tracks cache in seconds",
-        )
-        extractor_args.add_argument(
-            "--related-tracks-cache-maxsize",
-            dest="RELATED_TRACKS_CACHE_MAXSIZE",
-            type=int,
-            default=200,
-            help="Maximum size of the related tracks cache",
-        )
-        audio_args = parser.add_argument_group("Audio Streaming Options")
-        audio_args.add_argument(
-            "--audio-buffer-size",
-            dest="AUDIO_BUFFER_SIZE",
-            type=int,
-            default=4096,
-            help="Size of the audio buffer in bytes",
-        )
-        audio_args.add_argument(
-            "--poll-interval",
-            dest="POLL_INTERVAL",
-            type=float,
-            default=0.1,
-            help="Interval in seconds between FFmpeg stdin writes",
+        parser.add_argument(
+            "--cobalt-url",
+            dest="COBALT_API_URL",
+            default=None,
+            help="Cobalt API URL",
         )
 
-        args, _ = parser.parse_known_args()
-        for key, value in vars(args).items():
-            if value is not None:
-                self._config[key] = value
+        try:
+            args, _ = parser.parse_known_args()
+            for key, value in vars(args).items():
+                if value is not None:
+                    self._config[key] = value
+        except Exception as e:
+            logger.debug(f"cli args parsing error: {e}")
 
     def _load_from_env(self) -> None:
-        """Load configuration from environment variables (if not already set by args)."""
-        for key, default in self.get_defaults().items():
-            # skip if already set by command line args (value differs from default)
-            if self._config.get(key) != default:
-                continue
-            env_value = os.environ.get(key)
-            if env_value is not None:
-                if isinstance(default, bool):
-                    self._config[key] = self.str_to_bool(env_value)
+        """load configuration from environment variables."""
+        defaults = self.get_defaults()
+        for key in defaults:
+            env_val = os.environ.get(key)
+            if env_val is not None:
+                default_val = defaults.get(key)
+                if isinstance(default_val, int):
+                    with contextlib.suppress(ValueError):
+                        self._config[key] = int(env_val)
+                elif isinstance(default_val, bool):
+                    self._config[key] = env_val.lower() in ("1", "true", "yes")
                 else:
-                    self._config[key] = env_value
-
-    def str_to_bool(self, value: str | bool) -> bool:
-        if isinstance(value, bool):
-            return value
-        return value.lower() in ("1", "true", "yes")
+                    self._config[key] = env_val
 
     def __getitem__(self, key: str) -> Any:
         return self.get(key)
@@ -194,15 +145,15 @@ class ConfigLoader(BaseConfigLoader[ConfigT]):
             return self.get(key)
         defaults = self.get_defaults()
         if key in defaults:
-            return defaults[key]  # type: ignore  # last resort
+            return defaults.get(key)
         raise AttributeError(f"Config has no attribute '{key}'")
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Get a configuration value by key."""
+        """get configuration value by key."""
         return self._config.get(key, default)
 
     def set(self, key: str, value: Any) -> None:
-        """Set a configuration value."""
+        """set configuration value."""
         self._config[key] = value
 
 

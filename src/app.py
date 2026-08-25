@@ -1,18 +1,15 @@
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import logging
 import os
 import secrets
-import signal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from quart import Quart
 
 from .auth import auth_manager
-from .extensions import asc
 from .routes import register_all_routes
+from .services import close_redis_client
 from .utils.handlers import create_error_response
 
 if TYPE_CHECKING:
@@ -24,12 +21,9 @@ logger = logging.getLogger(__name__)
 def _resolve_secret_key() -> str:
     env_key = os.environ.get("PYLIVE_SECRET_KEY") or os.environ.get("SECRET_KEY")
     if env_key:
-        logger.info("using secret key from environment")
         return env_key
 
-    generated_key = secrets.token_hex(32)
-    logger.warning("environment secret key missing; generated ephemeral key")
-    return generated_key
+    return secrets.token_hex(32)
 
 
 async def not_found_error(_: HTTPException):
@@ -66,43 +60,10 @@ def create_app() -> Quart:
         logger.info("initializing authentication manager")
         await auth_manager.initialize()
 
-        logger.info("starting audio stream controller")
-        loop = asyncio.get_running_loop()
-
-        old_handlers: dict[int, Any] = {}
-
-        def _signal_handler(sig_num: int, frame: Any) -> None:
-            logger.info(
-                f"received signal {sig_num}, initiating audio controller shutdown"
-            )
-            with contextlib.suppress(Exception):
-                loop.call_soon_threadsafe(lambda: asyncio.create_task(asc.stop()))
-            old = old_handlers.get(sig_num)
-            if callable(old) and old not in (
-                signal.SIG_DFL,
-                signal.SIG_IGN,
-                signal.default_int_handler,
-            ):
-                old(sig_num, frame)
-
-        for sig in (
-            getattr(signal, "SIGINT", None),
-            getattr(signal, "SIGTERM", None),
-            getattr(signal, "SIGBREAK", None),
-        ):
-            if sig is not None:
-                try:
-                    old_handlers[sig] = signal.getsignal(sig)
-                    signal.signal(sig, _signal_handler)
-                except (ValueError, OSError):
-                    pass
-
-        await asc.start()
-
     @app.after_serving
     async def shutdown():
-        logger.info("stopping audio stream controller")
-        await asc.stop()
+        logger.info("closing redis connection pool")
+        await close_redis_client()
 
     if app.debug:
         app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0

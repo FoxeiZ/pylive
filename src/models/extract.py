@@ -1,39 +1,8 @@
-from collections.abc import Generator
-from typing import (
-    NotRequired,
-    TypedDict,
-)
+from __future__ import annotations
+
+from ..extractor.base import ExtractedTrack, format_duration_seconds
 
 __all__ = [
-    "BaseExtractModel",
-    "ExtractModel",
-    "ProcessedExtractModel",
+    "ExtractedTrack",
+    "format_duration_seconds",
 ]
-
-
-class BaseExtractModel(TypedDict):
-    title: str
-    id: str
-    duration: float
-    process: bool
-    webpage_url: str
-    is_live: NotRequired[bool]
-
-
-class BaseExtractPlaylistModel(BaseExtractModel):
-    entries: list[BaseExtractModel] | Generator[BaseExtractModel, None, None]
-
-
-class ExtractModel(BaseExtractModel):
-    channel: str
-    channel_url: str
-    extractor: str
-    thumbnail: NotRequired[str]
-
-
-class ProcessedExtractModel(ExtractModel):
-    url: str
-    format_duration: str
-    thumbnail: NotRequired[str]
-    expires_in: int
-

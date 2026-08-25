@@ -12,16 +12,25 @@ export const playerStore = {
   currentDuration: 0,
   durationInterval: null,
 
+  // synchronization state
+  startedAt: 0,
+  trackDuration: 0,
+  isPaused: false,
+  serverTimeOffset: 0, // client_time - server_time
+  syncInterval: null,
+  isAdvancing: false,
+
   // visualizer toggle
   showVisualizer: true,
 
   // track and queue state
   nowPlaying: {
     title: "Waiting for stream...",
-    channel: "Unknown",
-    webpage_url: "#",
-    channel_url: "#",
+    artist: "Unknown",
+    source_url: "#",
+    artwork_url: "",
     duration: 0,
+    stream_url: "",
   },
   queue: [],
   autoQueue: [],
@@ -36,8 +45,9 @@ export const playerStore = {
 
   // connectivity and notifications
   sseStatus: "connecting",
-  eventSource: null,
-  reconnectTimer: null,
+  realtimeClient: null,
+  realtimeChannel: null,
+  pollTimer: null,
   toasts: [],
   toastCounter: 0,
 
@@ -98,28 +108,37 @@ export const playerStore = {
       key: "minDecibels",
       label: "MIN DECIBELS",
       unit: "dB",
-      min: -100,
-      max: -40,
-      step: 2,
-      disabledIn: ["waveform"],
+      min: -120,
+      max: -30,
+      step: 1,
+      disabledIn: [],
     },
     {
       key: "maxDecibels",
       label: "MAX DECIBELS",
       unit: "dB",
-      min: -50,
-      max: -10,
-      step: 2,
-      disabledIn: ["waveform"],
+      min: -40,
+      max: 0,
+      step: 1,
+      disabledIn: [],
     },
     {
       key: "fps",
-      label: "FPS CAP",
+      label: "FRAME RATE",
       unit: "FPS",
-      min: 24,
-      max: 120,
-      step: 6,
+      min: 30,
+      max: 144,
+      step: 1,
       disabledIn: [],
+    },
+    {
+      key: "thickness",
+      label: "LINE THICKNESS",
+      unit: "PX",
+      min: 1,
+      max: 6,
+      step: 0.5,
+      disabledIn: ["bars"],
     },
   ],
 
@@ -128,25 +147,11 @@ export const playerStore = {
   },
 
   get formattedTotalDuration() {
-    if (
-      this.nowPlaying &&
-      this.nowPlaying.duration &&
-      this.nowPlaying.duration > 0
-    ) {
-      return formatTime(this.nowPlaying.duration);
-    }
-    return "LIVE";
-  },
-
-  formatSettingValue(item) {
-    const val = this.visualizerSettings[item.key];
-    if (item.key === "fftSize") return `${val}`;
-    if (!item.unit) return `${val}`;
-    return item.unit === "X" ? `${val}X` : `${val} ${item.unit}`;
+    return formatTime(this.nowPlaying.duration || 0);
   },
 
   getSliderValue(item) {
-    if (item.options && Array.isArray(item.options)) {
+    if (item.key === "fftSize") {
       const idx = item.options.indexOf(this.visualizerSettings[item.key]);
       return idx !== -1 ? idx : item.options.indexOf(1024);
     }
@@ -154,11 +159,7 @@ export const playerStore = {
   },
 
   get progressPercent() {
-    if (
-      this.nowPlaying &&
-      this.nowPlaying.duration &&
-      this.nowPlaying.duration > 0
-    ) {
+    if (this.nowPlaying && this.nowPlaying.duration && this.nowPlaying.duration > 0) {
       const pct = (this.currentDuration / this.nowPlaying.duration) * 100;
       return Math.min(Math.max(pct, 0), 100);
     }
@@ -175,8 +176,9 @@ export const playerStore = {
       this._applyGlobalAccent();
       this._bootstrapInitialData();
       this._setupAudioElement();
-      this.connectSSE();
+      this._setupRealtime();
       this._setupVisualizer();
+      this._startSyncLoop();
       Alpine.store("auth").fetchAuthStatus();
     };
 
@@ -200,10 +202,7 @@ export const playerStore = {
       const savedSettings = localStorage.getItem("pylive_viz_settings");
       if (savedSettings) {
         const parsed = JSON.parse(savedSettings);
-        if (
-          parsed.fftSize &&
-          !FFT_SIZES.includes(parseInt(parsed.fftSize, 10))
-        ) {
+        if (parsed.fftSize && !FFT_SIZES.includes(parseInt(parsed.fftSize, 10))) {
           delete parsed.fftSize;
         } else if (parsed.fftSize) {
           parsed.fftSize = parseInt(parsed.fftSize, 10);
@@ -214,7 +213,7 @@ export const playerStore = {
         };
       }
     } catch (err) {
-      console.warn("Failed to load local preferences", err);
+      console.warn("failed to load preferences", err);
     }
   },
 
@@ -222,12 +221,9 @@ export const playerStore = {
     try {
       localStorage.setItem("pylive_volume", this.volume.toString());
       localStorage.setItem("pylive_show_viz", this.showVisualizer.toString());
-      localStorage.setItem(
-        "pylive_viz_settings",
-        JSON.stringify(this.visualizerSettings),
-      );
+      localStorage.setItem("pylive_viz_settings", JSON.stringify(this.visualizerSettings));
     } catch (err) {
-      console.warn("Failed to save preferences", err);
+      console.warn("failed to save preferences", err);
     }
   },
 
@@ -245,6 +241,9 @@ export const playerStore = {
         if (initial.np && initial.np.title) {
           this.nowPlaying = initial.np;
           document.title = `Playing - ${initial.np.title}`;
+          if (initial.np.stream_url) {
+            this._applyTrackData(initial.np);
+          }
         }
         if (Array.isArray(initial.queue)) {
           this.queue = initial.queue;
@@ -256,9 +255,11 @@ export const playerStore = {
           Alpine.store("auth").setUser(initial.user);
         }
       } catch (err) {
-        console.error("Failed to parse initial SSR state", err);
+        console.error("failed to parse initial SSR state", err);
       }
     }
+    // fetch authoritative room state from api
+    this.fetchRoomState();
   },
 
   _setupAudioElement() {
@@ -267,10 +268,10 @@ export const playerStore = {
 
     audio.volume = this.volume;
     audio.muted = this.isMuted;
+    audio.crossOrigin = "anonymous";
 
     audio.addEventListener("playing", () => {
       this.isPlaying = true;
-      this._startDurationCounter();
       if (this.visualizer && this.showVisualizer) {
         this.visualizer.start();
       }
@@ -278,20 +279,21 @@ export const playerStore = {
 
     audio.addEventListener("pause", () => {
       this.isPlaying = false;
-      this._stopDurationCounter();
       if (this.visualizer) {
         this.visualizer.pause();
       }
     });
 
+    audio.addEventListener("ended", () => {
+      this.triggerTrackAdvance();
+    });
+
     audio.addEventListener("error", (e) => {
-      console.error("Audio stream playback error", e);
+      console.error("audio stream error", e);
       this.isPlaying = false;
-      this._stopDurationCounter();
       if (this.visualizer) {
         this.visualizer.pause();
       }
-      this.addToast("Stream error encountered. Retrying...", "error");
     });
   },
 
@@ -318,23 +320,179 @@ export const playerStore = {
     this.visualizer.init(audio, canvas);
   },
 
-  toggleVisualizer() {
-    this.showVisualizer = !this.showVisualizer;
-    this._savePreferences();
-
-    if (!this.visualizer) return;
-
-    if (this.showVisualizer) {
-      if (this.isPlaying) {
-        setTimeout(() => this.visualizer.start(), 150);
+  _setupRealtime() {
+    const config = window.__PYLIVE_CONFIG__ || {};
+    if (window.supabase && config.supabaseUrl && config.supabaseKey) {
+      try {
+        this.realtimeClient = window.supabase.createClient(config.supabaseUrl, config.supabaseKey);
+        this.realtimeChannel = this.realtimeClient
+          .channel("realtime:main")
+          .on("broadcast", { event: "track_change" }, (payload) => {
+            this._handleTrackChangeEvent(payload.payload);
+          })
+          .on("broadcast", { event: "playback_sync" }, (payload) => {
+            this._handlePlaybackSyncEvent(payload.payload);
+          })
+          .on("broadcast", { event: "queue_update" }, () => {
+            this.fetchQueue();
+          })
+          .subscribe((status) => {
+            if (status === "SUBSCRIBED") {
+              this.sseStatus = "connected";
+            } else if (status === "CLOSED" || status === "CHANNEL_ERROR") {
+              this.sseStatus = "disconnected";
+            }
+          });
+        return;
+      } catch (err) {
+        console.warn("supabase realtime initialization failed, falling back to polling", err);
       }
+    }
+
+    // fallback polling if supabase is not configured
+    this.sseStatus = "connected";
+    this.pollTimer = setInterval(() => {
+      this.fetchRoomState();
+    }, 5000);
+  },
+
+  _startSyncLoop() {
+    if (this.syncInterval) clearInterval(this.syncInterval);
+    this.syncInterval = setInterval(() => {
+      this.syncDrift();
+    }, 1000);
+  },
+
+  syncDrift() {
+    const audio = document.getElementById("audio-stream-player");
+    if (!audio || this.isPaused || !this.startedAt || !this.nowPlaying.stream_url) {
+      if (audio && !audio.paused && (!this.nowPlaying.stream_url || this.isPaused)) {
+        audio.pause();
+      }
+      return;
+    }
+
+    const currentServerTime = Date.now() - this.serverTimeOffset;
+    const elapsedSeconds = Math.max(0, (currentServerTime - this.startedAt) / 1000);
+    this.currentDuration = Math.floor(elapsedSeconds);
+
+    // track finished detection
+    if (this.trackDuration > 0 && elapsedSeconds >= this.trackDuration) {
+      this.triggerTrackAdvance();
+      return;
+    }
+
+    if (audio.paused && !this.isPaused && audio.src) {
+      audio.play().catch(() => {});
+    }
+
+    const actualTime = audio.currentTime;
+    const drift = elapsedSeconds - actualTime;
+
+    if (Math.abs(drift) > 2.0) {
+      audio.currentTime = elapsedSeconds;
+      audio.playbackRate = 1.0;
+    } else if (drift > 0.3) {
+      audio.playbackRate = 1.05;
+    } else if (drift < -0.3) {
+      audio.playbackRate = 0.95;
     } else {
-      this.visualizer.pause();
+      audio.playbackRate = 1.0;
     }
   },
 
-  setQueueTab(tab) {
-    this.activeQueueTab = tab;
+  async triggerTrackAdvance() {
+    if (this.isAdvancing) return;
+    this.isAdvancing = true;
+    try {
+      await fetch("/api/room/advance", { method: "POST" });
+    } catch (err) {
+      console.warn("advance request failed", err);
+    } finally {
+      setTimeout(() => {
+        this.isAdvancing = false;
+      }, 2000);
+    }
+  },
+
+  _applyTrackData(data) {
+    const audio = document.getElementById("audio-stream-player");
+    this.nowPlaying = {
+      title: data.title || "Unknown Track",
+      artist: data.artist || "Unknown Artist",
+      duration: Number(data.duration || 0),
+      stream_url: data.stream_url || "",
+      artwork_url: data.artwork_url || "",
+      source_url: data.source_url || "#",
+    };
+    this.startedAt = Number(data.started_at || Date.now());
+    this.trackDuration = Number(data.duration || 0);
+    this.isPaused = Boolean(data.is_paused);
+
+    if (data.server_time) {
+      this.serverTimeOffset = Date.now() - Number(data.server_time);
+    }
+
+    document.title = `${this.nowPlaying.title} - PyLive`;
+
+    if (audio && data.stream_url) {
+      if (audio.src !== data.stream_url) {
+        audio.crossOrigin = "anonymous";
+        audio.src = data.stream_url;
+        const currentServerTime = Date.now() - this.serverTimeOffset;
+        const elapsed = Math.max(0, (currentServerTime - this.startedAt) / 1000);
+        audio.currentTime = elapsed;
+        if (!this.isPaused) {
+          audio.play().catch(() => {
+            this.addToast("Click anywhere to enable audio playback", "info");
+          });
+        }
+      }
+    }
+  },
+
+  _handleTrackChangeEvent(data) {
+    if (!data) return;
+    this._applyTrackData(data);
+    this.fetchQueue();
+    if (data.title) {
+      this.addToast(`Now Playing: ${data.title}`, "info");
+    }
+  },
+
+  _handlePlaybackSyncEvent(data) {
+    if (!data) return;
+    this.isPaused = Boolean(data.is_paused);
+    const audio = document.getElementById("audio-stream-player");
+    if (!audio) return;
+
+    if (data.server_time) {
+      this.serverTimeOffset = Date.now() - Number(data.server_time);
+    }
+
+    if (this.isPaused) {
+      audio.pause();
+    } else {
+      if (data.position !== undefined) {
+        audio.currentTime = Number(data.position);
+      }
+      audio.play().catch(() => {});
+    }
+  },
+
+  async fetchRoomState() {
+    try {
+      const res = await fetch("/api/room/state");
+      if (!res.ok) return;
+      const json = await res.json();
+      if (json.data && json.data.now_playing) {
+        const np = json.data.now_playing;
+        np.server_time = json.data.server_time;
+        this._applyTrackData(np);
+      }
+    } catch (err) {
+      console.warn("failed to fetch room state", err);
+    }
   },
 
   togglePlay() {
@@ -343,14 +501,27 @@ export const playerStore = {
 
     if (this.isPlaying) {
       audio.pause();
-      audio.src = "";
-    } else {
-      audio.src = `/stream?_t=${Date.now()}`;
-      audio.play().catch((err) => {
-        console.warn("Playback initiation prevented", err);
+    } else if (this.nowPlaying.stream_url) {
+      audio.play().catch(() => {
         this.addToast("Click to enable audio playback", "info");
       });
     }
+  },
+
+  toggleVisualizer() {
+    this.showVisualizer = !this.showVisualizer;
+    this._savePreferences();
+
+    if (!this.visualizer) return;
+    if (this.showVisualizer && this.isPlaying) {
+      setTimeout(() => this.visualizer.start(), 150);
+    } else {
+      this.visualizer.pause();
+    }
+  },
+
+  setQueueTab(tab) {
+    this.activeQueueTab = tab;
   },
 
   setVolume(value) {
@@ -375,95 +546,6 @@ export const playerStore = {
     }
   },
 
-  _startDurationCounter() {
-    this._stopDurationCounter();
-    this.durationInterval = setInterval(() => {
-      this.currentDuration += 1;
-    }, 1000);
-  },
-
-  _stopDurationCounter() {
-    if (this.durationInterval) {
-      clearInterval(this.durationInterval);
-      this.durationInterval = null;
-    }
-  },
-
-  resetDuration() {
-    this.currentDuration = 0;
-  },
-
-  connectSSE() {
-    if (this.eventSource) {
-      this.eventSource.close();
-    }
-
-    this.sseStatus = "connecting";
-    try {
-      this.eventSource = new EventSource("/watch_event");
-
-      this.eventSource.onopen = () => {
-        this.sseStatus = "connected";
-      };
-
-      this.eventSource.addEventListener("nowplaying", (e) => {
-        this._handleNowPlayingEvent(e);
-      });
-
-      this.eventSource.addEventListener("queueadd", (e) => {
-        this._handleQueueAddEvent(e);
-      });
-
-      this.eventSource.addEventListener("shutdown", () => {
-        this.sseStatus = "disconnected";
-        this.addToast("Radio stream is shutting down", "warning");
-      });
-
-      this.eventSource.onerror = (err) => {
-        console.warn("EventSource disconnected, scheduling reconnect", err);
-        this.sseStatus = "disconnected";
-        this.eventSource.close();
-        this._scheduleSSEReconnect();
-      };
-    } catch (err) {
-      console.error("Failed to create EventSource", err);
-      this.sseStatus = "disconnected";
-      this._scheduleSSEReconnect();
-    }
-  },
-
-  _scheduleSSEReconnect() {
-    if (this.reconnectTimer) return;
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      this.connectSSE();
-    }, 3500);
-  },
-
-  _handleNowPlayingEvent(event) {
-    try {
-      const data = JSON.parse(event.data);
-      this.nowPlaying = data;
-      this.resetDuration();
-      document.title = `${data.title || "PyLive"} - PyLive`;
-
-      // refresh full queue from api
-      this.fetchQueue();
-    } catch (err) {
-      console.error("Error handling nowplaying event", err);
-    }
-  },
-
-  _handleQueueAddEvent(event) {
-    try {
-      const data = JSON.parse(event.data);
-      this.queue.push(data);
-      this.addToast(`Queued: ${data.title || "New Track"}`, "success");
-    } catch (err) {
-      console.error("Error handling queueadd event", err);
-    }
-  },
-
   async fetchQueue() {
     try {
       const res = await fetch("/queue/?page=0&use_autoplay=true");
@@ -478,7 +560,7 @@ export const playerStore = {
         }
       }
     } catch (err) {
-      console.warn("Error fetching queue updates", err);
+      console.warn("error fetching queue", err);
     }
   },
 
@@ -515,7 +597,7 @@ export const playerStore = {
         this.addToast(msg, "error");
       }
     } catch (err) {
-      console.error("Error adding track", err);
+      console.error("error adding track", err);
       this.addToast("Network error while adding track", "error");
     } finally {
       this.isSubmittingTrack = false;
@@ -545,12 +627,12 @@ export const playerStore = {
 
       const data = await res.json();
       if (res.ok && data.msg === "success") {
-        this.addToast("Vote skip recorded", "info");
+        this.addToast("Track skipped", "info");
       } else {
         this.addToast(data.msg || "Skip request failed", "error");
       }
     } catch (err) {
-      console.error("Error skipping track", err);
+      console.error("error skipping track", err);
       this.addToast("Network error during skip", "error");
     } finally {
       setTimeout(() => {
@@ -560,53 +642,22 @@ export const playerStore = {
   },
 
   async refreshAutoplayQueue() {
-    const authStore = Alpine.store("auth");
-    if (!authStore.hasPermission("queue:autoplay_refresh")) {
-      if (!authStore.isAuthenticated) {
-        this.addToast("Please login to refresh autoplay", "info");
-        authStore.openLoginModal();
-      } else {
-        this.addToast(
-          "Permission denied: queue:autoplay_refresh required",
-          "error",
-        );
-      }
-      return;
-    }
-
     if (this.isRefreshingAutoplay) return;
     this.isRefreshingAutoplay = true;
-
     try {
-      const res = await fetch("/queue/autoplay/refresh", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-
-      const data = await res.json();
-      if (res.ok && data.msg === "success") {
-        this.addToast("Autoplay queue refreshed", "success");
-        await this.fetchQueue();
-      } else {
-        this.addToast(data.msg || "Failed to refresh autoplay queue", "error");
-      }
-    } catch (err) {
-      console.error("Error refreshing autoplay queue", err);
-      this.addToast("Network error while refreshing autoplay", "error");
+      await this.fetchQueue();
+      this.addToast("Autoplay queue refreshed", "success");
     } finally {
       this.isRefreshingAutoplay = false;
     }
   },
 
-  // visualizer settings updates
   updateVisualizer(key, val) {
     if (key === "fftSize") {
       const parsed = parseInt(val, 10);
       const fftConfig = this.sliderConfigs.find((c) => c.key === "fftSize");
       const targetSize =
-        fftConfig &&
-        fftConfig.options &&
-        fftConfig.options[parsed] !== undefined
+        fftConfig && fftConfig.options && fftConfig.options[parsed] !== undefined
           ? fftConfig.options[parsed]
           : FFT_SIZES.includes(parsed)
             ? parsed
@@ -631,7 +682,6 @@ export const playerStore = {
     }
 
     this._savePreferences();
-
     if (key === "theme") {
       this._applyGlobalAccent();
     }
@@ -640,7 +690,6 @@ export const playerStore = {
   addToast(text, type = "info") {
     const id = ++this.toastCounter;
     this.toasts.push({ id, text, type });
-
     setTimeout(() => {
       this.removeToast(id);
     }, 4000);

@@ -10,6 +10,13 @@
               rel="stylesheet">
         <link rel="stylesheet"
               href="{{ url_for('static', filename='styles/base.css') }}">
+        <script>
+            window.__PYLIVE_CONFIG__ = {
+                supabaseUrl: "{{ supabase_url | default('', true) }}",
+                supabaseKey: "{{ supabase_key | default('', true) }}"
+            };
+        </script>
+        <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
         <script type="module"
                 src="{{ url_for('static', filename='scripts/app.js') }}"></script>
     </head>

@@ -7,10 +7,11 @@ requires-python = ">=3.12"
 dependencies = [
     "cachetools>=5.3.0",
     "httpx>=0.28.1",
+    "pydantic>=2.13.4",
     "python-dotenv>=1.2.3",
     "quart>=0.20.0",
-    "yt-dlp>=2025.11.12",
-    "yt-dlp-ejs>=0.3.1",
+    "redis>=8.1.0",
+    "supabase>=2.31.0",
 ]
 
 [dependency-groups]

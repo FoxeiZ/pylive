@@ -17,6 +17,7 @@ class Permission(StrEnum):
     QUEUE_SKIP_FORCE = "queue:skip_force"
     QUEUE_CLEAR = "queue:clear"
     QUEUE_AUTOPLAY_REFRESH = "queue:autoplay_refresh"
+    PLAYER_CONTROL = "player:control"
     ADMIN_MANAGE_USERS = "admin:manage_users"
 
 
@@ -27,6 +28,7 @@ ALL_PERMISSIONS: Final[list[Permission]] = [
     Permission.QUEUE_SKIP_FORCE,
     Permission.QUEUE_CLEAR,
     Permission.QUEUE_AUTOPLAY_REFRESH,
+    Permission.PLAYER_CONTROL,
     Permission.ADMIN_MANAGE_USERS,
 ]
 
