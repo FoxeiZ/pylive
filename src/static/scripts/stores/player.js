@@ -1,6 +1,8 @@
 import Alpine from "../vendor/alpine.esm.min.js";
-import { AudioVisualizer } from "../visualizer.js";
+import { AudioVisualizer } from "../dist/visualizer.js";
 import { formatTime, THEME_ACCENTS } from "../utils/format.js";
+
+const FFT_SIZES = [256, 512, 1024, 2048, 4096, 8192];
 
 export const playerStore = {
   // playback state
@@ -45,6 +47,7 @@ export const playerStore = {
     mode: "bars",
     theme: "cyan",
     barCount: 48,
+    fftSize: 1024,
     sensitivity: 0.8,
     minDecibels: -85,
     maxDecibels: -20,
@@ -59,7 +62,7 @@ export const playerStore = {
       label: "BAR DENSITY",
       unit: "BARS",
       min: 16,
-      max: 96,
+      max: 256,
       step: 4,
       disabledIn: ["waveform"],
     },
@@ -71,6 +74,16 @@ export const playerStore = {
       max: 0.95,
       step: 0.01,
       disabledIn: ["waveform"],
+    },
+    {
+      key: "fftSize",
+      label: "FFT SIZE",
+      unit: "",
+      min: 0,
+      max: FFT_SIZES.length - 1,
+      step: 1,
+      options: FFT_SIZES,
+      disabledIn: [],
     },
     {
       key: "multiplier",
@@ -127,8 +140,17 @@ export const playerStore = {
 
   formatSettingValue(item) {
     const val = this.visualizerSettings[item.key];
+    if (item.key === "fftSize") return `${val}`;
     if (!item.unit) return `${val}`;
     return item.unit === "X" ? `${val}X` : `${val} ${item.unit}`;
+  },
+
+  getSliderValue(item) {
+    if (item.options && Array.isArray(item.options)) {
+      const idx = item.options.indexOf(this.visualizerSettings[item.key]);
+      return idx !== -1 ? idx : item.options.indexOf(1024);
+    }
+    return this.visualizerSettings[item.key];
   },
 
   get progressPercent() {
@@ -177,9 +199,18 @@ export const playerStore = {
       }
       const savedSettings = localStorage.getItem("pylive_viz_settings");
       if (savedSettings) {
+        const parsed = JSON.parse(savedSettings);
+        if (
+          parsed.fftSize &&
+          !FFT_SIZES.includes(parseInt(parsed.fftSize, 10))
+        ) {
+          delete parsed.fftSize;
+        } else if (parsed.fftSize) {
+          parsed.fftSize = parseInt(parsed.fftSize, 10);
+        }
         this.visualizerSettings = {
           ...this.visualizerSettings,
-          ...JSON.parse(savedSettings),
+          ...parsed,
         };
       }
     } catch (err) {
@@ -281,6 +312,7 @@ export const playerStore = {
       fps: this.visualizerSettings.fps,
       thickness: this.visualizerSettings.thickness,
       multiplier: this.visualizerSettings.multiplier,
+      fftSize: this.visualizerSettings.fftSize,
     });
 
     this.visualizer.init(audio, canvas);
@@ -568,24 +600,41 @@ export const playerStore = {
 
   // visualizer settings updates
   updateVisualizer(key, val) {
-    this.visualizerSettings[key] = val;
+    if (key === "fftSize") {
+      const parsed = parseInt(val, 10);
+      const fftConfig = this.sliderConfigs.find((c) => c.key === "fftSize");
+      const targetSize =
+        fftConfig &&
+        fftConfig.options &&
+        fftConfig.options[parsed] !== undefined
+          ? fftConfig.options[parsed]
+          : FFT_SIZES.includes(parsed)
+            ? parsed
+            : 1024;
+      this.visualizerSettings.fftSize = targetSize;
+      if (this.visualizer) {
+        this.visualizer.setFftSize(targetSize);
+      }
+    } else {
+      this.visualizerSettings[key] = val;
+      if (this.visualizer) {
+        if (key === "mode") this.visualizer.setMode(val);
+        if (key === "theme") this.visualizer.setTheme(val);
+        if (key === "barCount") this.visualizer.setBarCount(val);
+        if (key === "sensitivity") this.visualizer.setSensitivity(val);
+        if (key === "minDecibels") this.visualizer.setMinDecibels(val);
+        if (key === "maxDecibels") this.visualizer.setMaxDecibels(val);
+        if (key === "thickness") this.visualizer.setThickness(val);
+        if (key === "multiplier") this.visualizer.setMultiplier(val);
+        if (key === "fps") this.visualizer.setFps(val);
+      }
+    }
+
     this._savePreferences();
 
     if (key === "theme") {
       this._applyGlobalAccent();
     }
-
-    if (!this.visualizer) return;
-
-    if (key === "mode") this.visualizer.setMode(val);
-    if (key === "theme") this.visualizer.setTheme(val);
-    if (key === "barCount") this.visualizer.setBarCount(val);
-    if (key === "sensitivity") this.visualizer.setSensitivity(val);
-    if (key === "minDecibels") this.visualizer.setMinDecibels(val);
-    if (key === "maxDecibels") this.visualizer.setMaxDecibels(val);
-    if (key === "thickness") this.visualizer.setThickness(val);
-    if (key === "multiplier") this.visualizer.setMultiplier(val);
-    if (key === "fps") this.visualizer.setFps(val);
   },
 
   addToast(text, type = "info") {

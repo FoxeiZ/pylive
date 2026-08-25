@@ -169,8 +169,21 @@ export class AudioVisualizer {
   }
 
   setBarCount(count) {
-    const num = Math.min(Math.max(parseInt(count, 10) || 48, 16), 96);
+    const num = Math.min(Math.max(parseInt(count, 10) || 48, 16), 256);
     this.barCount = num;
+  }
+
+  setFftSize(size) {
+    const num = parseInt(size, 10);
+    const validSizes = [256, 512, 1024, 2048, 4096, 8192];
+    if (validSizes.includes(num)) {
+      this.fftSize = num;
+      if (this.analyser) {
+        this.analyser.fftSize = num;
+        this.frequencyData = new Uint8Array(this.analyser.frequencyBinCount);
+        this.timeDomainData = new Uint8Array(this.analyser.frequencyBinCount);
+      }
+    }
   }
 
   setSensitivity(val) {

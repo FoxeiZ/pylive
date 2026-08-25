@@ -260,7 +260,7 @@
                                    :min="item.min"
                                    :max="item.max"
                                    :step="item.step"
-                                   :value="$store.player.visualizerSettings[item.key]"
+                                   :value="$store.player.getSliderValue ? $store.player.getSliderValue(item) : $store.player.visualizerSettings[item.key]"
                                    @input="$store.player.updateVisualizer(item.key, $event.target.value)"
                                    class="settings-slider"
                                    :aria-label="item.label"
